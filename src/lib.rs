@@ -297,6 +297,20 @@ impl IndexMetadata {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct DbCustomIndex {
+    pub(crate) keyspace: KeyspaceName,
+    pub(crate) index: TableName,
+    pub(crate) table: TableName,
+    pub(crate) target: ColumnName,
+}
+
+impl DbCustomIndex {
+    pub(crate) fn id(&self) -> IndexId {
+        IndexId::new(&self.keyspace, &self.index)
+    }
+}
+
 #[derive(derive_more::From)]
 pub struct HttpServerAddr(SocketAddr);
 
