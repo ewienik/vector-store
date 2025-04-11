@@ -4,12 +4,14 @@
  */
 
 use reqwest::Client;
+use serde_json::Value;
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use vector_store::ColumnName;
 use vector_store::Distance;
 use vector_store::Embeddings;
 use vector_store::IndexId;
 use vector_store::IndexMetadata;
-use vector_store::Key;
 use vector_store::Limit;
 use vector_store::httproutes::PostIndexAnnRequest;
 use vector_store::httproutes::PostIndexAnnResponse;
@@ -43,7 +45,7 @@ impl HttpClient {
         index: &IndexMetadata,
         embeddings: Embeddings,
         limit: Limit,
-    ) -> (Vec<Key>, Vec<Distance>) {
+    ) -> (HashMap<ColumnName, Vec<Value>>, Vec<Distance>) {
         let resp = self
             .client
             .post(format!(
@@ -57,6 +59,6 @@ impl HttpClient {
             .json::<PostIndexAnnResponse>()
             .await
             .unwrap();
-        (resp.keys, resp.distances)
+        (resp.primary_keys, resp.distances)
     }
 }

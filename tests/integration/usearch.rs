@@ -7,6 +7,7 @@ use crate::db_basic;
 use crate::db_basic::Index;
 use crate::db_basic::Table;
 use crate::httpclient::HttpClient;
+use scylla::value::CqlValue;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::time::Duration;
@@ -24,7 +25,6 @@ async fn simple_create_search_delete_index() {
         keyspace_name: "vector".to_string().into(),
         table_name: "items".to_string().into(),
         index_name: "ann".to_string().into(),
-        key_name: "id".to_string().into(),
         target_column: "embeddings".to_string().into(),
         dimensions: NonZeroUsize::new(3).unwrap().into(),
         connectivity: 0.into(),
@@ -46,6 +46,7 @@ async fn simple_create_search_delete_index() {
         index.keyspace_name.clone(),
         index.table_name.clone(),
         Table {
+            primary_keys: vec!["pk".to_string().into(), "ck".to_string().into()],
             dimensions: [(index.target_column.clone(), index.dimensions)]
                 .into_iter()
                 .collect(),
@@ -69,9 +70,18 @@ async fn simple_create_search_delete_index() {
         &index.table_name,
         &index.target_column,
         vec![
-            (1.into(), vec![1., 1., 1.].into()),
-            (2.into(), vec![2., -2., 2.].into()),
-            (3.into(), vec![3., 3., 3.].into()),
+            (
+                vec![CqlValue::Int(1), CqlValue::Text("one".to_string())].into(),
+                vec![1., 1., 1.].into(),
+            ),
+            (
+                vec![CqlValue::Int(2), CqlValue::Text("two".to_string())].into(),
+                vec![2., -2., 2.].into(),
+            ),
+            (
+                vec![CqlValue::Int(3), CqlValue::Text("three".to_string())].into(),
+                vec![3., 3., 3.].into(),
+            ),
         ],
     )
     .unwrap();
@@ -93,16 +103,20 @@ async fn simple_create_search_delete_index() {
         client.indexes().await.first().unwrap().as_ref(),
         "vector.ann"
     );
-    let (keys, distances) = client
+    let (primary_keys, distances) = client
         .ann(
             &index,
             vec![2.1, -2., 2.].into(),
             NonZeroUsize::new(1).unwrap().into(),
         )
         .await;
-    assert_eq!(keys.len(), 1);
-    assert_eq!(distances.len(), keys.len());
-    assert_eq!(keys.first().unwrap().as_ref(), &2u64);
+    assert_eq!(distances.len(), 1);
+    let primary_keys_pk = primary_keys.get(&"pk".to_string().into()).unwrap();
+    let primary_keys_ck = primary_keys.get(&"ck".to_string().into()).unwrap();
+    assert_eq!(distances.len(), primary_keys_pk.len());
+    assert_eq!(distances.len(), primary_keys_ck.len());
+    assert_eq!(primary_keys_pk.first().unwrap().as_i64().unwrap(), 2);
+    assert_eq!(primary_keys_ck.first().unwrap().as_str().unwrap(), "two");
 
     db.del_index(&index.keyspace_name, &index.index_name)
         .unwrap();

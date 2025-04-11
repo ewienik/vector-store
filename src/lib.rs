@@ -18,7 +18,10 @@ use scylla::serialize::SerializationError;
 use scylla::serialize::value::SerializeValue;
 use scylla::serialize::writers::CellWriter;
 use scylla::serialize::writers::WrittenCellProof;
+use scylla::value::CqlValue;
 use std::borrow::Cow;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use tokio::signal;
@@ -137,6 +140,7 @@ impl SerializeValue for TableName {
     serde::Serialize,
     serde::Deserialize,
     derive_more::Display,
+    utoipa::ToSchema,
 )]
 /// Name of the column in a db table
 pub struct ColumnName(String);
@@ -177,6 +181,23 @@ impl SerializeValue for Key {
         <i64 as SerializeValue>::serialize(&(self.0 as i64), typ, writer)
     }
 }
+
+#[derive(Clone, Debug, derive_more::From)]
+pub struct PrimaryKey(Vec<CqlValue>);
+
+impl Hash for PrimaryKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        format!("{self:?}").hash(state);
+    }
+}
+
+impl PartialEq for PrimaryKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq(&other.0)
+    }
+}
+
+impl Eq for PrimaryKey {}
 
 #[derive(
     Clone, Debug, serde::Serialize, serde::Deserialize, derive_more::From, utoipa::ToSchema,
@@ -347,7 +368,6 @@ pub struct IndexMetadata {
     pub index_name: TableName,
     pub table_name: TableName,
     pub target_column: ColumnName,
-    pub key_name: ColumnName,
     pub dimensions: Dimensions,
     pub connectivity: Connectivity,
     pub expansion_add: ExpansionAdd,
