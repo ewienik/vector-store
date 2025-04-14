@@ -10,11 +10,23 @@ use crate::KeyspaceName;
 use crate::PrimaryKey;
 use crate::TableName;
 use anyhow::Context;
+use anyhow::anyhow;
 use futures::StreamExt;
 use futures::TryStreamExt;
 use futures::stream::BoxStream;
+use itertools::Itertools;
 use scylla::client::session::Session;
+use scylla::cluster::metadata::ColumnType;
+use scylla::cluster::metadata::NativeType;
+use scylla::deserialize::row::ColumnIterator;
+use scylla::deserialize::row::DeserializeRow;
+use scylla::deserialize::value::DeserializeValue;
+use scylla::errors::DeserializationError;
+use scylla::errors::TypeCheckError;
+use scylla::frame::response::result::ColumnSpec;
 use scylla::statement::prepared::PreparedStatement;
+use scylla::value::CqlValue;
+use scylla::value::Row;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -147,6 +159,61 @@ async fn process(statements: Arc<Statements>, msg: DbIndex) {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+enum DeserializeError {
+    #[error("Query for primary key & embeddings should contains at least two elements")]
+    InvalidQuerySelectLength,
+    #[error("Invalid embeddings type")]
+    InvalidEmbeddingsType,
+}
+
+struct PrimaryKeyWithEmbeddings {
+    primary_key: PrimaryKey,
+    embeddings: Embeddings,
+}
+
+impl<'frame, 'metadata> DeserializeRow<'frame, 'metadata> for PrimaryKeyWithEmbeddings {
+    fn type_check(specs: &[ColumnSpec]) -> Result<(), TypeCheckError> {
+        if specs.len() < 2 {
+            return Err(TypeCheckError::new(
+                DeserializeError::InvalidQuerySelectLength,
+            ));
+        }
+        let ColumnType::Vector { typ, .. } = specs.last().unwrap().typ() else {
+            return Err(TypeCheckError::new(DeserializeError::InvalidEmbeddingsType));
+        };
+        let ColumnType::Native(NativeType::Float) = typ.as_ref() else {
+            return Err(TypeCheckError::new(DeserializeError::InvalidEmbeddingsType));
+        };
+        Ok(())
+    }
+
+    fn deserialize(
+        mut row: ColumnIterator<'frame, 'metadata>,
+    ) -> Result<Self, DeserializationError> {
+        let columns = row.columns_remaining();
+        let mut count = 0;
+        let primary_key = row
+            .take_while_ref(|_| {
+                count += 1;
+                count < columns
+            })
+            .map_ok(|column| CqlValue::deserialize(column.spec.typ(), column.slice))
+            .flatten()
+            .collect::<Result<Vec<_>, _>>()?
+            .into();
+        let embeddings = row
+            .next()
+            .unwrap()
+            .and_then(|column| Vec::<f32>::deserialize(column.spec.typ(), column.slice))?
+            .into();
+        Ok(PrimaryKeyWithEmbeddings {
+            primary_key,
+            embeddings,
+        })
+    }
+}
+
 struct Statements {
     session: Arc<Session>,
     primary_key_columns: Vec<ColumnName>,
@@ -158,12 +225,37 @@ struct Statements {
 
 impl Statements {
     async fn new(session: Arc<Session>, metadata: IndexMetadata) -> anyhow::Result<Self> {
+        let cluster_state = session.get_cluster_state();
+        let table = cluster_state
+            .get_keyspace(metadata.keyspace_name.as_ref())
+            .ok_or_else(|| anyhow!("keyspace {} not exists", metadata.keyspace_name))?
+            .tables
+            .get(metadata.table_name.as_ref())
+            .ok_or_else(|| anyhow!("table {} not exists", metadata.table_name))?;
+
+        let primary_key_columns = table
+            .partition_key
+            .iter()
+            .chain(table.clustering_key.iter())
+            .cloned()
+            .map(ColumnName::from)
+            .collect_vec();
+
+        let primary_key_select = primary_key_columns.iter().join(", ");
+
+        let primary_key_where = primary_key_columns
+            .iter()
+            .map(|column| format!("{column} = ?"))
+            .join(" AND ");
+
         Ok(Self {
+            primary_key_columns,
+
             st_get_processed_ids: session
                 .prepare(Self::get_processed_ids_query(
                     &metadata.keyspace_name,
                     &metadata.table_name,
-                    &metadata.key_name,
+                    &primary_key_select,
                 ))
                 .await
                 .context("get_processed_ids_query")?,
@@ -172,7 +264,7 @@ impl Statements {
                 .prepare(Self::get_items_query(
                     &metadata.keyspace_name,
                     &metadata.table_name,
-                    &metadata.key_name,
+                    &primary_key_select,
                     &metadata.target_column,
                 ))
                 .await
@@ -182,6 +274,7 @@ impl Statements {
                 .prepare(Self::reset_item_query(
                     &metadata.keyspace_name,
                     &metadata.table_name,
+                    &primary_key_where,
                 ))
                 .await
                 .context("reset_items_query")?,
@@ -190,11 +283,10 @@ impl Statements {
                 .prepare(Self::update_item_query(
                     &metadata.keyspace_name,
                     &metadata.table_name,
+                    &primary_key_where,
                 ))
                 .await
                 .context("update_item_query")?,
-
-            primary_key_columns: vec![metadata.key_name],
 
             session,
         })
@@ -207,11 +299,11 @@ impl Statements {
     fn get_processed_ids_query(
         keyspace: &KeyspaceName,
         table: &TableName,
-        col_id: &ColumnName,
+        primary_key_select: &str,
     ) -> String {
         format!(
             "
-            SELECT {col_id}
+            SELECT {primary_key_select}
             FROM {keyspace}.{table}
             WHERE processed = TRUE
             LIMIT 1000
@@ -224,21 +316,27 @@ impl Statements {
             .session
             .execute_iter(self.st_get_processed_ids.clone(), ())
             .await?
-            .rows_stream::<(i64,)>()?
-            .map_ok(|(key,)| vec![(key as u64).into()].into())
+            .rows_stream::<Row>()?
             .map_err(|err| err.into())
+            .and_then(|row| async move {
+                row.columns
+                    .into_iter()
+                    .map(|col| col.ok_or_else(|| anyhow!("missing value for a primary key")))
+                    .collect::<anyhow::Result<Vec<_>>>()
+                    .map(PrimaryKey::from)
+            })
             .boxed())
     }
 
     fn get_items_query(
         keyspace: &KeyspaceName,
         table: &TableName,
-        col_id: &ColumnName,
-        col_emb: &ColumnName,
+        primary_key_select: &str,
+        embeddings: &ColumnName,
     ) -> String {
         format!(
             "
-            SELECT {col_id}, {col_emb}
+            SELECT {primary_key_select}, {embeddings}
             FROM {keyspace}.{table}
             WHERE processed = FALSE
             "
@@ -250,18 +348,22 @@ impl Statements {
             .session
             .execute_iter(self.st_get_items.clone(), ())
             .await?
-            .rows_stream::<(i64, Vec<f32>)>()?
-            .map_ok(|(key, embeddings)| (vec![(key as u64).into()].into(), embeddings.into()))
+            .rows_stream::<PrimaryKeyWithEmbeddings>()?
             .map_err(|err| err.into())
+            .map_ok(|row| (row.primary_key, row.embeddings))
             .boxed())
     }
 
-    fn reset_item_query(keyspace: &KeyspaceName, table: &TableName) -> String {
+    fn reset_item_query(
+        keyspace: &KeyspaceName,
+        table: &TableName,
+        primary_key_where: &str,
+    ) -> String {
         format!(
             "
             UPDATE {keyspace}.{table}
                 SET processed = False
-                WHERE id = ?
+                WHERE {primary_key_where}
             "
         )
     }
@@ -273,12 +375,16 @@ impl Statements {
         Ok(())
     }
 
-    fn update_item_query(keyspace: &KeyspaceName, table: &TableName) -> String {
+    fn update_item_query(
+        keyspace: &KeyspaceName,
+        table: &TableName,
+        primary_key_where: &str,
+    ) -> String {
         format!(
             "
             UPDATE {keyspace}.{table}
                 SET processed = True
-                WHERE id = ?
+                WHERE {primary_key_where}
             "
         )
     }

@@ -17,10 +17,12 @@ use crate::db::DbExt;
 use crate::index::actor::AnnR;
 use crate::index::actor::Index;
 use anyhow::anyhow;
+use bimap::BiMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::AtomicU32;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -41,6 +43,20 @@ const RESERVE_INCREMENT: usize = 1000000;
 // When free space for index vectors drops below this, will reserve more space
 // The ratio was taken for initial benchmarks
 const RESERVE_THRESHOLD: usize = RESERVE_INCREMENT / 3;
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::From,
+    derive_more::AsRef,
+    derive_more::Display,
+)]
+/// Key for index embeddings
+struct Key(u64);
 
 pub(crate) fn new(
     id: IndexId,
@@ -78,6 +94,9 @@ pub(crate) fn new(
                     .await
                     .unwrap_or_else(|err| warn!("index::new: unable update items count: {err}"));
 
+                let keys = Arc::new(RwLock::new(BiMap::new()));
+                let atomic_key = Arc::new(AtomicU64::new(0));
+
                 let mut housekeeping_interval = time::interval(time::Duration::from_secs(1));
                 let idx_lock = Arc::new(RwLock::new(()));
 
@@ -99,6 +118,8 @@ pub(crate) fn new(
                                     dimensions,
                                     Arc::clone(&idx),
                                     Arc::clone(&idx_lock),
+                                    Arc::clone(&keys),
+                                    Arc::clone(&atomic_key),
                                     Arc::clone(&items_count),
                                 )
                             );
@@ -118,6 +139,8 @@ async fn process(
     dimensions: Dimensions,
     idx: Arc<usearch::Index>,
     idx_lock: Arc<RwLock<()>>,
+    keys: Arc<RwLock<BiMap<PrimaryKey, Key>>>,
+    atomic_key: Arc<AtomicU64>,
     items_count: Arc<AtomicU32>,
 ) {
     match msg {
@@ -125,7 +148,16 @@ async fn process(
             primary_key,
             embeddings,
         } => {
-            add(idx, idx_lock, primary_key, embeddings, items_count).await;
+            add(
+                idx,
+                idx_lock,
+                keys,
+                atomic_key,
+                primary_key,
+                embeddings,
+                items_count,
+            )
+            .await;
         }
 
         Index::Ann {
@@ -133,7 +165,7 @@ async fn process(
             limit,
             tx,
         } => {
-            ann(idx, tx, embeddings, dimensions, limit).await;
+            ann(idx, tx, keys, embeddings, dimensions, limit).await;
         }
     }
 }
@@ -157,10 +189,25 @@ async fn housekeeping(
 async fn add(
     idx: Arc<usearch::Index>,
     idx_lock: Arc<RwLock<()>>,
+    keys: Arc<RwLock<BiMap<PrimaryKey, Key>>>,
+    atomic_key: Arc<AtomicU64>,
     primary_key: PrimaryKey,
     embeddings: Embeddings,
     items_count: Arc<AtomicU32>,
 ) {
+    let key = atomic_key.fetch_add(1, Ordering::Relaxed).into();
+
+    if keys
+        .write()
+        .unwrap()
+        .insert_no_overwrite(primary_key.clone(), key)
+        .is_err()
+    {
+        warn!("index::add: primary_key already exists: {primary_key:?}");
+        return;
+    }
+
+    let (tx, rx) = oneshot::channel();
     rayon::spawn(move || {
         let capacity = idx.capacity();
         if capacity - idx.size() < RESERVE_THRESHOLD {
@@ -170,27 +217,33 @@ async fn add(
             debug!("index::add: trying to reserve {capacity}");
             if let Err(err) = idx.reserve(capacity) {
                 error!("index::add: unable to reserve index capacity for {capacity}: {err}");
+                tx.send(false)
+                    .unwrap_or_else(|_| warn!("index::add: unable to send response"));
                 return;
             }
             debug!("index::add: finished reserve {capacity}");
         }
 
         let _lock = idx_lock.read().unwrap();
-        let Some(key) = primary_key.0.first() else {
-            error!("index::add: an empty primary key");
-            return;
-        };
         if let Err(err) = idx.add(key.0, &embeddings.0) {
             warn!("index::add: unable to add embeddings for key {key}: {err}");
+            tx.send(false)
+                .unwrap_or_else(|_| warn!("index::add: unable to send response"));
             return;
         };
         items_count.fetch_add(1, Ordering::Relaxed);
+        tx.send(true)
+            .unwrap_or_else(|_| warn!("index::add: unable to send response"));
     });
+    if let Ok(false) = rx.await {
+        keys.write().unwrap().remove_by_right(&key);
+    }
 }
 
 async fn ann(
     idx: Arc<usearch::Index>,
     tx_ann: oneshot::Sender<AnnR>,
+    keys: Arc<RwLock<BiMap<PrimaryKey, Key>>>,
     embeddings: Embeddings,
     dimensions: Dimensions,
     limit: Limit,
@@ -227,19 +280,25 @@ async fn ann(
                 .and_then(|matches| {
                     matches.map_err(|err| anyhow!("index::ann: search failed: {err}"))
                 })
-                .map(|matches| {
-                    (
+                .and_then(|matches| {
+                    let primary_keys = {
+                        let keys = keys.read().unwrap();
                         matches
                             .keys
                             .into_iter()
-                            .map(|key| vec![key.into()].into())
-                            .collect(),
-                        matches
-                            .distances
-                            .into_iter()
-                            .map(|value| value.into())
-                            .collect(),
-                    )
+                            .map(|key| {
+                                keys.get_by_right(&key.into())
+                                    .cloned()
+                                    .ok_or(anyhow!("not defined primary key column {key}"))
+                            })
+                            .collect::<anyhow::Result<_>>()?
+                    };
+                    let distances = matches
+                        .distances
+                        .into_iter()
+                        .map(|value| value.into())
+                        .collect();
+                    Ok((primary_keys, distances))
                 }),
         )
         .unwrap_or_else(|_| warn!("index::ann: unable to send response"));
