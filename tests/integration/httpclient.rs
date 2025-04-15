@@ -61,4 +61,18 @@ impl HttpClient {
             .unwrap();
         (resp.primary_keys, resp.distances)
     }
+
+    pub(crate) async fn size(&self, index: &IndexMetadata) -> Option<usize> {
+        self.client
+            .get(format!(
+                "{}/indexes/{}/{}/size",
+                self.url_api, index.keyspace_name, index.index_name
+            ))
+            .send()
+            .await
+            .unwrap()
+            .json::<usize>()
+            .await
+            .ok()
+    }
 }

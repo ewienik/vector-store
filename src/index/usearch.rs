@@ -16,6 +16,7 @@ use crate::db::Db;
 use crate::db::DbExt;
 use crate::index::actor::AnnR;
 use crate::index::actor::Index;
+use crate::index::actor::SizeR;
 use anyhow::anyhow;
 use bimap::BiMap;
 use std::num::NonZeroUsize;
@@ -158,6 +159,10 @@ async fn process(
         } => {
             ann(idx, tx, keys, embeddings, dimensions, limit).await;
         }
+
+        Index::Size { tx } => {
+            size(idx, idx_lock, tx);
+        }
     }
 }
 
@@ -289,4 +294,12 @@ async fn ann(
                 }),
         )
         .unwrap_or_else(|_| warn!("index::ann: unable to send response"));
+}
+
+fn size(idx: Arc<usearch::Index>, idx_lock: Arc<RwLock<()>>, tx: oneshot::Sender<SizeR>) {
+    tx.send(Ok({
+        let _lock = idx_lock.read().unwrap();
+        idx.size()
+    }))
+    .unwrap_or_else(|_| warn!("index::size: unable to send response"));
 }

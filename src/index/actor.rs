@@ -12,6 +12,7 @@ use tokio::sync::oneshot;
 use tracing::warn;
 
 pub(crate) type AnnR = anyhow::Result<(Vec<PrimaryKey>, Vec<Distance>)>;
+pub(crate) type SizeR = anyhow::Result<usize>;
 
 pub(crate) enum Index {
     Add {
@@ -23,11 +24,15 @@ pub(crate) enum Index {
         limit: Limit,
         tx: oneshot::Sender<AnnR>,
     },
+    Size {
+        tx: oneshot::Sender<SizeR>,
+    },
 }
 
 pub(crate) trait IndexExt {
     async fn add(&self, primary_key: PrimaryKey, embeddings: Embeddings);
     async fn ann(&self, embeddings: Embeddings, limit: Limit) -> AnnR;
+    async fn size(&self) -> SizeR;
 }
 
 impl IndexExt for mpsc::Sender<Index> {
@@ -48,6 +53,12 @@ impl IndexExt for mpsc::Sender<Index> {
             tx,
         })
         .await?;
+        rx.await?
+    }
+
+    async fn size(&self) -> SizeR {
+        let (tx, rx) = oneshot::channel();
+        self.send(Index::Size { tx }).await?;
         rx.await?
     }
 }
