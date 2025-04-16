@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+use tokio::sync::Semaphore;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tracing::Instrument;
@@ -73,7 +74,7 @@ pub(crate) fn new(
     idx.reserve(RESERVE_INCREMENT)?;
 
     // TODO: The value of channel size was taken from initial benchmarks. Needs more testing
-    const CHANNEL_SIZE: usize = 100000;
+    const CHANNEL_SIZE: usize = 10;
     let (tx, mut rx) = mpsc::channel(CHANNEL_SIZE);
 
     tokio::spawn(
@@ -84,15 +85,20 @@ pub(crate) fn new(
 
             let idx_lock = Arc::new(RwLock::new(()));
 
+            let semaphore = Arc::new(Semaphore::new(rayon::current_num_threads() * 2));
+
             while let Some(msg) = rx.recv().await {
-                tokio::spawn(process(
-                    msg,
-                    dimensions,
-                    Arc::clone(&idx),
-                    Arc::clone(&idx_lock),
-                    Arc::clone(&keys),
-                    Arc::clone(&atomic_key),
-                ));
+                let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
+                tokio::spawn({
+                    let idx = Arc::clone(&idx);
+                    let idx_lock = Arc::clone(&idx_lock);
+                    let keys = Arc::clone(&keys);
+                    let atomic_key = Arc::clone(&atomic_key);
+                    async move {
+                        process(msg, dimensions, idx, idx_lock, keys, atomic_key).await;
+                        drop(permit);
+                    }
+                });
             }
             debug!("finished");
         }
