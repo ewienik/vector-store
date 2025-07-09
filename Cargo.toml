@@ -15,14 +15,16 @@ anyhow = "1.0.97"
 async-trait = "0.1.88"
 axum = { version = "0.8.1", features = ["macros"] }
 bimap = "0.6.3"
+clap = { version = "4.5.40", features = ["derive"] }
 derive_more = { version = "2.0.1", features = ["full"] }
 dotenvy = "0.15.7"
 futures = "0.3.31"
+hickory-server = "0.25.2"
 httpclient = { path = "crates/httpclient" }
 itertools = "0.14.0"
 macros = { path = "crates/macros" }
 ntest = "0.9.3"
-opensearch = { version = "2.3.0" }
+opensearch = { version = "2.3.0", default-features = false, features = ["rustls-tls"] }
 proc-macro2 = "1.0"
 prometheus = "0.14"
 quote = "1.0"
