@@ -58,6 +58,8 @@ struct State {
 
 impl State {
     async fn new(ip: Ipv4Addr, base: Ipv4Addr) -> Self {
+        let version = hickory_server::version().to_string();
+
         assert!(ip.is_loopback(), "DNS server should run in a loopback mode");
         assert!(
             base.is_loopback(),
@@ -73,8 +75,6 @@ impl State {
             ip_octets[1] != base_octets[1] || ip_octets[2] != base_octets[2],
             "DNS server should serve addresses from different subnet than dns server"
         );
-
-        let version = env!("CARGO_PKG_VERSION").to_string();
 
         Self {
             ip,
