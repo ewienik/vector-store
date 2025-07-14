@@ -1,4 +1,10 @@
+use hickory_server::authority::Catalog;
+use hickory_server::server::Request;
+use hickory_server::server::RequestHandler;
+use hickory_server::server::ServerFuture;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
+use std::sync::RwLock;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tracing::Instrument;
@@ -8,11 +14,19 @@ use tracing::debug_span;
 type VersionR = String;
 
 pub(crate) enum Dns {
-    Version { tx: oneshot::Sender<VersionR> },
+    Version {
+        tx: oneshot::Sender<VersionR>,
+    },
+    AddEntity {
+        name: String,
+        ip: Ipv4Addr,
+        tx: oneshot::Sender<()>,
+    },
 }
 
 pub(crate) trait DnsExt {
     async fn version(&self) -> VersionR;
+    async fn add_entity(&self, name: String, ip: Ipv4Addr) -> ();
 }
 
 impl DnsExt for mpsc::Sender<Dns> {
@@ -23,6 +37,15 @@ impl DnsExt for mpsc::Sender<Dns> {
             .expect("DnsExt::version: internal actor should receive request");
         rx.await
             .expect("DnsExt::version: internal actor should send response")
+    }
+
+    async fn add_entity(&self, name: String, ip: Ipv4Addr) -> () {
+        let (tx, rx) = oneshot::channel();
+        self.send(Dns::AddEntity { name, ip, tx })
+            .await
+            .expect("DnsExt::add_entity: internal actor should receive request");
+        rx.await
+            .expect("DnsExt::add_entity: internal actor should send response")
     }
 }
 
@@ -56,6 +79,22 @@ struct State {
     version: String,
 }
 
+#[derive(Clone)]
+struct Store(Arc<RwLock<Catalog>>);
+
+impl Store {
+    fn new() -> Self {
+        Self(Arc::new(RwLock::new(Catalog::new())))
+    }
+}
+
+impl RequestHandler for Store {
+    fn handle_request<R>(&self, request: &Request, response_handle: R) -> Self::Response {
+        let mut catalog = self.0.read().unwrap();
+        catalog.handle_request(request, response_handle)
+    }
+}
+
 impl State {
     async fn new(ip: Ipv4Addr, base: Ipv4Addr) -> Self {
         let version = format!("hicory-server-{}", hickory_server::version());
@@ -76,6 +115,9 @@ impl State {
             "DNS server should serve addresses from different subnet than dns server"
         );
 
+        let store = Store::new();
+        let server = ServerFuture::new(store.clone());
+
         Self {
             ip,
             base,
@@ -91,5 +133,13 @@ async fn process(msg: Dns, state: &State) {
             tx.send(state.version.clone())
                 .expect("process Dns::Version: failed to send a response");
         }
+
+        Dns::AddEntity { name, ip, tx } => {
+            add_entity(name, ip, state).await;
+            tx.send(())
+                .expect("process Dns::AddEntity: failed to send a response");
+        }
     }
 }
+
+async fn add_entity(name: String, ip: Ipv4Addr, state: &State) -> () {}
