@@ -1,10 +1,17 @@
 use hickory_server::authority::Catalog;
-use hickory_server::server::Request;
-use hickory_server::server::RequestHandler;
+use hickory_server::authority::ZoneType;
+use hickory_server::proto::rr::LowerName;
+use hickory_server::proto::rr::Name;
+use hickory_server::proto::rr::rdata::a::A;
+use hickory_server::proto::rr::record_data::RData;
+use hickory_server::proto::rr::record_type::RecordType;
+use hickory_server::proto::rr::resource::Record;
 use hickory_server::server::ServerFuture;
+use hickory_server::store::in_memory::InMemoryAuthority;
 use std::net::Ipv4Addr;
+use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::RwLock;
+use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tracing::Instrument;
@@ -14,19 +21,15 @@ use tracing::debug_span;
 type VersionR = String;
 
 pub(crate) enum Dns {
-    Version {
-        tx: oneshot::Sender<VersionR>,
-    },
-    AddEntity {
-        name: String,
-        ip: Ipv4Addr,
-        tx: oneshot::Sender<()>,
-    },
+    Version { tx: oneshot::Sender<VersionR> },
+    Zone { tx: oneshot::Sender<String> },
+    Upsert { name: String, ip: Option<Ipv4Addr> },
 }
 
 pub(crate) trait DnsExt {
     async fn version(&self) -> VersionR;
-    async fn add_entity(&self, name: String, ip: Ipv4Addr) -> ();
+    async fn zone(&self) -> String;
+    async fn upsert(&self, name: String, ip: Option<Ipv4Addr>);
 }
 
 impl DnsExt for mpsc::Sender<Dns> {
@@ -39,29 +42,53 @@ impl DnsExt for mpsc::Sender<Dns> {
             .expect("DnsExt::version: internal actor should send response")
     }
 
-    async fn add_entity(&self, name: String, ip: Ipv4Addr) -> () {
+    async fn zone(&self) -> VersionR {
         let (tx, rx) = oneshot::channel();
-        self.send(Dns::AddEntity { name, ip, tx })
+        self.send(Dns::Zone { tx })
             .await
-            .expect("DnsExt::add_entity: internal actor should receive request");
+            .expect("DnsExt::zone: internal actor should receive request");
         rx.await
-            .expect("DnsExt::add_entity: internal actor should send response")
+            .expect("DnsExt::zone: internal actor should send response")
+    }
+
+    async fn upsert(&self, name: String, ip: Option<Ipv4Addr>) {
+        self.send(Dns::Upsert { name, ip })
+            .await
+            .expect("DnsExt::upsert: internal actor should receive request");
     }
 }
 
-pub(crate) async fn new(ip: Ipv4Addr, base: Ipv4Addr) -> mpsc::Sender<Dns> {
+pub(crate) async fn new(ip: Ipv4Addr) -> mpsc::Sender<Dns> {
     let (tx, mut rx) = mpsc::channel(10);
 
-    let state = State::new(ip, base).await;
+    let mut state = State::new().await;
+
+    let socket = UdpSocket::bind((ip, 53))
+        .await
+        .expect("dns: failed to bind UDP socket");
+
+    let mut catalog = Catalog::new();
+    catalog.upsert(
+        LowerName::from_str(ZONE).unwrap(),
+        vec![state.authority.clone()],
+    );
+    let mut server = ServerFuture::new(catalog);
+    server.register_socket(socket);
 
     tokio::spawn(
         async move {
             debug!("starting");
 
             while let Some(msg) = rx.recv().await {
-                process(msg, &state).await;
+                process(msg, &mut state).await;
             }
-            debug!("starting");
+
+            server
+                .shutdown_gracefully()
+                .await
+                .expect("stop: failed to shutdown server gracefully");
+
+            debug!("stopped");
         }
         .instrument(debug_span!("dns")),
     );
@@ -70,76 +97,65 @@ pub(crate) async fn new(ip: Ipv4Addr, base: Ipv4Addr) -> mpsc::Sender<Dns> {
 }
 
 struct State {
-    #[allow(dead_code)]
-    ip: Ipv4Addr,
-    #[allow(dead_code)]
-    base: Ipv4Addr,
-    #[allow(dead_code)]
-    base_octets: [u8; 4],
     version: String,
+    authority: Arc<InMemoryAuthority>,
+    serial: u32,
 }
 
-#[derive(Clone)]
-struct Store(Arc<RwLock<Catalog>>);
-
-impl Store {
-    fn new() -> Self {
-        Self(Arc::new(RwLock::new(Catalog::new())))
-    }
-}
-
-impl RequestHandler for Store {
-    fn handle_request<R>(&self, request: &Request, response_handle: R) -> Self::Response {
-        let mut catalog = self.0.read().unwrap();
-        catalog.handle_request(request, response_handle)
-    }
-}
+const ZONE: &str = "validator.test";
+const TTL: u32 = 60;
 
 impl State {
-    async fn new(ip: Ipv4Addr, base: Ipv4Addr) -> Self {
+    async fn new() -> Self {
         let version = format!("hicory-server-{}", hickory_server::version());
 
-        assert!(ip.is_loopback(), "DNS server should run in a loopback mode");
-        assert!(
-            base.is_loopback(),
-            "DNS server should serve addresses in a loopback mode"
-        );
-        let ip_octets = ip.octets();
-        let base_octets = base.octets();
-        assert_eq!(
-            base_octets[3], 1,
-            "DNS server should serve addresses from number 1"
-        );
-        assert!(
-            ip_octets[1] != base_octets[1] || ip_octets[2] != base_octets[2],
-            "DNS server should serve addresses from different subnet than dns server"
-        );
-
-        let store = Store::new();
-        let server = ServerFuture::new(store.clone());
+        let authority = Arc::new(InMemoryAuthority::empty(
+            Name::from_str(ZONE).unwrap(),
+            ZoneType::Primary,
+            false,
+        ));
 
         Self {
-            ip,
-            base,
-            base_octets,
             version,
+            authority,
+            serial: 0,
         }
     }
 }
 
-async fn process(msg: Dns, state: &State) {
+async fn process(msg: Dns, state: &mut State) {
     match msg {
         Dns::Version { tx } => {
             tx.send(state.version.clone())
                 .expect("process Dns::Version: failed to send a response");
         }
 
-        Dns::AddEntity { name, ip, tx } => {
-            add_entity(name, ip, state).await;
-            tx.send(())
-                .expect("process Dns::AddEntity: failed to send a response");
+        Dns::Zone { tx } => {
+            tx.send(ZONE.to_string())
+                .expect("process Dns::Zone: failed to send a response");
+        }
+
+        Dns::Upsert { name, ip } => {
+            upsert(name, ip, state).await;
         }
     }
 }
 
-async fn add_entity(name: String, ip: Ipv4Addr, state: &State) -> () {}
+async fn upsert(name: String, ip: Option<Ipv4Addr>, state: &mut State) {
+    let serial = state.serial;
+    state.serial += 1;
+    let name = Name::from_str(&name).expect("upsert: failed to parse name");
+
+    let record = if let Some(ip) = ip {
+        let octets = ip.octets();
+        Record::from_rdata(
+            name,
+            TTL,
+            RData::A(A::new(octets[0], octets[1], octets[2], octets[3])),
+        )
+    } else {
+        Record::update0(name, TTL, RecordType::A)
+    };
+
+    state.authority.upsert(record, serial).await;
+}

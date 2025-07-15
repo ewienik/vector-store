@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+futures.workspace = true
 hickory-server.workspace = true
 tokio.workspace = true
 tracing.workspace = true
