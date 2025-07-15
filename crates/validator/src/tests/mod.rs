@@ -29,7 +29,14 @@ pub(crate) async fn run(
         .then(|(name, test_case)| {
             let actors = actors.clone();
             let filter = filter.clone();
-            async move { test_case.run(actors, filter.get(&name).unwrap()).await }
+            async move {
+                test_case
+                    .run(
+                        actors,
+                        &filter.get(&name).unwrap_or(&HashSet::new()).clone(),
+                    )
+                    .await
+            }
         })
         .filter(|ok| {
             let ok = *ok;

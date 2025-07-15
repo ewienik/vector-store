@@ -1,5 +1,6 @@
 mod db;
 mod dns;
+mod ip;
 mod test_case;
 mod tests;
 mod vs;
@@ -77,6 +78,7 @@ async fn main() {
     let dns = dns::new(args.dns_ip).await;
     let db = db::new(args.scylla).await;
     let vs = vs::new(args.vector_store).await;
+    let ip = ip::new(args.base_ip).await;
 
     info!(
         "{} version: {}",
@@ -92,7 +94,7 @@ async fn main() {
     // TODO: implement a filter using cmdline arguments
     assert!(
         tests::run(
-            TestActors { dns, db, vs },
+            TestActors { dns, db, vs, ip },
             test_cases,
             Arc::new(HashMap::new())
         )

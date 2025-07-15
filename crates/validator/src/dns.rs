@@ -18,22 +18,20 @@ use tracing::Instrument;
 use tracing::debug;
 use tracing::debug_span;
 
-type VersionR = String;
-
 pub(crate) enum Dns {
-    Version { tx: oneshot::Sender<VersionR> },
+    Version { tx: oneshot::Sender<String> },
     Zone { tx: oneshot::Sender<String> },
     Upsert { name: String, ip: Option<Ipv4Addr> },
 }
 
 pub(crate) trait DnsExt {
-    async fn version(&self) -> VersionR;
+    async fn version(&self) -> String;
     async fn zone(&self) -> String;
     async fn upsert(&self, name: String, ip: Option<Ipv4Addr>);
 }
 
 impl DnsExt for mpsc::Sender<Dns> {
-    async fn version(&self) -> VersionR {
+    async fn version(&self) -> String {
         let (tx, rx) = oneshot::channel();
         self.send(Dns::Version { tx })
             .await
@@ -42,7 +40,7 @@ impl DnsExt for mpsc::Sender<Dns> {
             .expect("DnsExt::version: internal actor should send response")
     }
 
-    async fn zone(&self) -> VersionR {
+    async fn zone(&self) -> String {
         let (tx, rx) = oneshot::channel();
         self.send(Dns::Zone { tx })
             .await

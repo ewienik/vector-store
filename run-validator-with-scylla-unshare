@@ -26,7 +26,16 @@ echo "nameserver $dns_ip" > $tmp_resolv_conf
 
 sudo unshare -n -m /bin/bash <<EOF
 mount --bind $tmp_resolv_conf /etc/resolv.conf
-$validator --dns-ip $dns_ip --base-ip $base_ip $scylla $vector_store $@
+route
+ip addr
+ip route
+ip link set lo up
+ip route add 127.0.0.0/8 dev lo
+#sudo route add -net 127.0.0/8 lo
+ip addr
+ip route
+cat /etc/resolv.conf
+echo $validator --dns-ip $dns_ip --base-ip $base_ip $scylla $vector_store $@
 EOF
 
 rm $tmp_resolv_conf

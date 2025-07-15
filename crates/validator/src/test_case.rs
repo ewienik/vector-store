@@ -1,5 +1,6 @@
 use crate::db::Db;
 use crate::dns::Dns;
+use crate::ip::Ip;
 use crate::vs::Vs;
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -13,6 +14,7 @@ pub(crate) struct TestActors {
     pub(crate) dns: Sender<Dns>,
     pub(crate) db: Sender<Db>,
     pub(crate) vs: Sender<Vs>,
+    pub(crate) ip: Sender<Ip>,
 }
 
 type TestFuture = BoxFuture<'static, ()>;
