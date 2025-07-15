@@ -15,7 +15,7 @@ pub(crate) struct TestActors {
     pub(crate) vs: Sender<Vs>,
 }
 
-pub(crate) type TestFuture = BoxFuture<'static, ()>;
+type TestFuture = BoxFuture<'static, ()>;
 
 type TestFn = Box<dyn Fn(TestActors) -> TestFuture>;
 
@@ -34,26 +34,30 @@ impl TestCase {
         }
     }
 
-    pub(crate) fn single_test(name: impl ToString, test_fn: TestFn) -> Self {
-        Self {
-            init: None,
-            tests: [(name.to_string(), test_fn)].into_iter().collect(),
-            cleanup: None,
-        }
-    }
-
-    pub(crate) fn with_init(mut self, test_fn: TestFn) -> Self {
-        self.init = Some(test_fn);
+    pub(crate) fn with_init<F, R>(mut self, test_fn: F) -> Self
+    where
+        F: Fn(TestActors) -> R + 'static,
+        R: Future<Output = ()> + Send + 'static,
+    {
+        self.init = Some(wrap_test_fn(test_fn));
         self
     }
 
-    pub(crate) fn with_test(mut self, name: impl ToString, test_fn: TestFn) -> Self {
-        self.tests.push((name.to_string(), test_fn));
+    pub(crate) fn with_test<F, R>(mut self, name: impl ToString, test_fn: F) -> Self
+    where
+        F: Fn(TestActors) -> R + 'static,
+        R: Future<Output = ()> + Send + 'static,
+    {
+        self.tests.push((name.to_string(), wrap_test_fn(test_fn)));
         self
     }
 
-    pub(crate) fn with_cleanup(mut self, test_fn: TestFn) -> Self {
-        self.cleanup = Some(test_fn);
+    pub(crate) fn with_cleanup<F, R>(mut self, test_fn: F) -> Self
+    where
+        F: Fn(TestActors) -> R + 'static,
+        R: Future<Output = ()> + Send + 'static,
+    {
+        self.cleanup = Some(wrap_test_fn(test_fn));
         self
     }
 
@@ -88,6 +92,17 @@ impl TestCase {
 
         ok
     }
+}
+
+fn wrap_test_fn<F, R>(test_fn: F) -> TestFn
+where
+    F: Fn(TestActors) -> R + 'static,
+    R: Future<Output = ()> + Send + 'static,
+{
+    Box::new(move |actors: TestActors| {
+        let future = test_fn(actors);
+        async move { future.await }.boxed()
+    })
 }
 
 async fn run_single(future: TestFuture) -> bool {

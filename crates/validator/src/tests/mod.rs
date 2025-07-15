@@ -9,7 +9,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 pub(crate) async fn register() -> Vec<(String, TestCase)> {
-    let test_cases = vec![];
+    let test_cases = vec![("crud", crud::new().await)]
+        .into_iter()
+        .map(|(name, test_case)| (name.to_string(), test_case))
+        .collect::<Vec<_>>();
     test_cases
 }
 
