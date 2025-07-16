@@ -1,8 +1,10 @@
 use hickory_server::authority::Catalog;
 use hickory_server::authority::ZoneType;
+use hickory_server::proto::rr::DNSClass;
 use hickory_server::proto::rr::LowerName;
 use hickory_server::proto::rr::Name;
 use hickory_server::proto::rr::rdata::a::A;
+use hickory_server::proto::rr::rdata::soa::SOA;
 use hickory_server::proto::rr::record_data::RData;
 use hickory_server::proto::rr::record_type::RecordType;
 use hickory_server::proto::rr::resource::Record;
@@ -20,13 +22,13 @@ use tracing::debug_span;
 
 pub(crate) enum Dns {
     Version { tx: oneshot::Sender<String> },
-    Zone { tx: oneshot::Sender<String> },
+    Domain { tx: oneshot::Sender<String> },
     Upsert { name: String, ip: Option<Ipv4Addr> },
 }
 
 pub(crate) trait DnsExt {
     async fn version(&self) -> String;
-    async fn zone(&self) -> String;
+    async fn domain(&self) -> String;
     async fn upsert(&self, name: String, ip: Option<Ipv4Addr>);
 }
 
@@ -40,16 +42,17 @@ impl DnsExt for mpsc::Sender<Dns> {
             .expect("DnsExt::version: internal actor should send response")
     }
 
-    async fn zone(&self) -> String {
+    async fn domain(&self) -> String {
         let (tx, rx) = oneshot::channel();
-        self.send(Dns::Zone { tx })
+        self.send(Dns::Domain { tx })
             .await
-            .expect("DnsExt::zone: internal actor should receive request");
+            .expect("DnsExt::domain: internal actor should receive request");
         rx.await
-            .expect("DnsExt::zone: internal actor should send response")
+            .expect("DnsExt::domain: internal actor should send response")
     }
 
     async fn upsert(&self, name: String, ip: Option<Ipv4Addr>) {
+        dbg!(&name, &ip);
         self.send(Dns::Upsert { name, ip })
             .await
             .expect("DnsExt::upsert: internal actor should receive request");
@@ -100,7 +103,7 @@ struct State {
     serial: u32,
 }
 
-const ZONE: &str = "validator.test";
+const ZONE: &str = "validator.test.";
 const TTL: u32 = 60;
 
 impl State {
@@ -112,6 +115,21 @@ impl State {
             ZoneType::Primary,
             false,
         ));
+        let mut soa = Record::from_rdata(
+            Name::from_str(ZONE).unwrap(),
+            TTL,
+            RData::SOA(SOA::new(
+                Name::from_str(ZONE).unwrap(),
+                Name::new(),
+                0,
+                0,
+                0,
+                0,
+                0,
+            )),
+        );
+        soa.set_dns_class(DNSClass::IN);
+        authority.upsert(soa, 0).await;
 
         Self {
             version,
@@ -128,13 +146,13 @@ async fn process(msg: Dns, state: &mut State) {
                 .expect("process Dns::Version: failed to send a response");
         }
 
-        Dns::Zone { tx } => {
-            tx.send(ZONE.to_string())
-                .expect("process Dns::Zone: failed to send a response");
+        Dns::Domain { tx } => {
+            tx.send(ZONE[..ZONE.len() - 1].to_string())
+                .expect("process Dns::Domain: failed to send a response");
         }
 
         Dns::Upsert { name, ip } => {
-            upsert(name, ip, state).await;
+            upsert(dbg!(name), dbg!(ip), state).await;
         }
     }
 }
@@ -142,18 +160,19 @@ async fn process(msg: Dns, state: &mut State) {
 async fn upsert(name: String, ip: Option<Ipv4Addr>, state: &mut State) {
     let serial = state.serial;
     state.serial += 1;
-    let name = Name::from_str(&name).expect("upsert: failed to parse name");
+    let name = Name::from_str(&format!("{name}.{ZONE}")).expect("upsert: failed to parse name");
 
-    let record = if let Some(ip) = ip {
+    let mut record = if let Some(ip) = dbg!(ip) {
         let octets = ip.octets();
         Record::from_rdata(
-            name,
+            dbg!(name),
             TTL,
-            RData::A(A::new(octets[0], octets[1], octets[2], octets[3])),
+            dbg!(RData::A(A::new(octets[0], octets[1], octets[2], octets[3]))),
         )
     } else {
-        Record::update0(name, TTL, RecordType::A)
+        Record::update0(dbg!(name), TTL, RecordType::A)
     };
+    record.set_dns_class(DNSClass::IN);
 
-    state.authority.upsert(record, serial).await;
+    state.authority.upsert(record, dbg!(serial)).await;
 }

@@ -24,11 +24,20 @@ const VS_OCTET: u8 = 1;
 const DB_OCTET: u8 = 2;
 
 async fn init(actors: TestActors) {
+    dbg!();
     let vs_ip = actors.ip.calculate(VS_OCTET).await;
 
-    actors.dns.upsert(VS_NAME.to_string(), Some(vs_ip)).await;
+    actors
+        .dns
+        .upsert(dbg!(VS_NAME.to_string()), dbg!(Some(vs_ip)))
+        .await;
 
-    let vs_url = format!("http://{}.{}:{}", VS_NAME, actors.dns.zone().await, VS_PORT);
+    let vs_url = format!(
+        "http://{}.{}:{}",
+        VS_NAME,
+        actors.dns.domain().await,
+        VS_PORT
+    );
 
     let db_ip = actors.ip.calculate(DB_OCTET).await;
 
@@ -41,6 +50,7 @@ async fn init(actors: TestActors) {
 }
 
 async fn cleanup(actors: TestActors) {
+    dbg!();
     actors.dns.upsert(VS_NAME.to_string(), None).await;
     actors.vs.stop().await;
     actors.db.stop().await;
