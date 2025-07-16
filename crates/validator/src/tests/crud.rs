@@ -40,7 +40,8 @@ async fn init(actors: TestActors) {
     let db_ip = actors.ip.calculate(DB_OCTET).await;
 
     actors.db.start(vs_url, db_ip).await;
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    assert!(actors.db.wait_for_ready().await);
+
     actors
         .vs
         .start((vs_ip, VS_PORT).into(), (db_ip, DB_PORT).into())
