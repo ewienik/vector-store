@@ -7,7 +7,12 @@ use futures::future::BoxFuture;
 use futures::stream;
 use futures::stream::StreamExt;
 use std::collections::HashSet;
+use std::future;
 use tokio::sync::mpsc::Sender;
+use tracing::Instrument;
+use tracing::Span;
+use tracing::info;
+use tracing::info_span;
 
 #[derive(Clone)]
 pub(crate) struct TestActors {
@@ -64,34 +69,34 @@ impl TestCase {
     }
 
     pub(crate) async fn run(&self, actors: TestActors, filter: &HashSet<String>) -> bool {
+        info!("started run");
+
         if let Some(init) = &self.init {
-            if !run_single(init(actors.clone())).await {
+            if !run_single(info_span!("init"), init(actors.clone())).await {
+                info!("finished: error in init");
                 return false;
             }
         }
 
         let ok = stream::iter(self.tests.iter())
-            .filter_map(|(name, test)| async move {
-                (filter.is_empty() || filter.contains(name)).then_some(test)
-            })
-            .then(|test| {
+            .filter(|(name, _)| future::ready(filter.is_empty() || filter.contains(name)))
+            .then(|(name, test)| {
                 let actors = actors.clone();
-                async move { run_single(test(actors)).await }
+                async move { run_single(info_span!("test", name), test(actors)).await }
             })
-            .filter(|ok| {
-                let ok = *ok;
-                async move { !ok }
-            })
+            .filter(|ok| future::ready(*ok == false))
             .count()
             .await
             == 0;
 
         if let Some(cleanup) = &self.cleanup {
-            if !run_single(cleanup(actors.clone())).await {
+            if !run_single(info_span!("cleanup"), cleanup(actors.clone())).await {
+                info!("finished: error in cleanup");
                 return false;
             }
         }
 
+        info!("finished");
         ok
     }
 }
@@ -107,9 +112,12 @@ where
     })
 }
 
-async fn run_single(future: TestFuture) -> bool {
-    let task = tokio::spawn(async move {
-        future.await;
-    });
+async fn run_single(span: Span, future: TestFuture) -> bool {
+    let task = tokio::spawn(
+        async move {
+            future.await;
+        }
+        .instrument(span),
+    );
     task.await.is_ok()
 }

@@ -7,6 +7,8 @@ use futures::stream::StreamExt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
+use tracing::Instrument;
+use tracing::info_span;
 
 pub(crate) async fn register() -> Vec<(String, TestCase)> {
     let test_cases = vec![("crud", crud::new().await)]
@@ -29,12 +31,14 @@ pub(crate) async fn run(
         .then(|(name, test_case)| {
             let actors = actors.clone();
             let filter = filter.clone();
+            let filter_name = name.clone();
             async move {
                 test_case
                     .run(
                         actors,
-                        &filter.get(&name).unwrap_or(&HashSet::new()).clone(),
+                        &filter.get(&filter_name).unwrap_or(&HashSet::new()).clone(),
                     )
+                    .instrument(info_span!("test-case", name))
                     .await
             }
         })

@@ -52,7 +52,6 @@ impl DnsExt for mpsc::Sender<Dns> {
     }
 
     async fn upsert(&self, name: String, ip: Option<Ipv4Addr>) {
-        dbg!(&name, &ip);
         self.send(Dns::Upsert { name, ip })
             .await
             .expect("DnsExt::upsert: internal actor should receive request");
@@ -152,7 +151,7 @@ async fn process(msg: Dns, state: &mut State) {
         }
 
         Dns::Upsert { name, ip } => {
-            upsert(dbg!(name), dbg!(ip), state).await;
+            upsert(name, ip, state).await;
         }
     }
 }
@@ -162,17 +161,17 @@ async fn upsert(name: String, ip: Option<Ipv4Addr>, state: &mut State) {
     state.serial += 1;
     let name = Name::from_str(&format!("{name}.{ZONE}")).expect("upsert: failed to parse name");
 
-    let mut record = if let Some(ip) = dbg!(ip) {
+    let mut record = if let Some(ip) = ip {
         let octets = ip.octets();
         Record::from_rdata(
-            dbg!(name),
+            name,
             TTL,
-            dbg!(RData::A(A::new(octets[0], octets[1], octets[2], octets[3]))),
+            RData::A(A::new(octets[0], octets[1], octets[2], octets[3])),
         )
     } else {
-        Record::update0(dbg!(name), TTL, RecordType::A)
+        Record::update0(name, TTL, RecordType::A)
     };
     record.set_dns_class(DNSClass::IN);
 
-    state.authority.upsert(record, dbg!(serial)).await;
+    state.authority.upsert(record, serial).await;
 }

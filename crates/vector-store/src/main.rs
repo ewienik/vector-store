@@ -34,18 +34,16 @@ async fn main() -> anyhow::Result<()> {
         info::Info::version()
     );
 
-    let vector_store_addr = dbg!(
-        dotenvy::var("VECTOR_STORE_URI")
-            .unwrap_or("127.0.0.1:6080".to_string())
-            .to_socket_addrs()?
-    )
-    .next()
-    .ok_or(anyhow!("Unable to parse VECTOR_STORE_URI env (host:port)"))?
-    .into();
+    let vector_store_addr = dotenvy::var("VECTOR_STORE_URI")
+        .unwrap_or("127.0.0.1:6080".to_string())
+        .to_socket_addrs()?
+        .next()
+        .ok_or(anyhow!("Unable to parse VECTOR_STORE_URI env (host:port)"))?
+        .into();
 
-    let scylladb_uri =
-        dbg!(dotenvy::var("VECTOR_STORE_SCYLLADB_URI").unwrap_or("127.0.0.1:9042".to_string()))
-            .into();
+    let scylladb_uri = dotenvy::var("VECTOR_STORE_SCYLLADB_URI")
+        .unwrap_or("127.0.0.1:9042".to_string())
+        .into();
 
     let background_threads = dotenvy::var("VECTOR_STORE_THREADS")
         .ok()

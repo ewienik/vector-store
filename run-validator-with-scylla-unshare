@@ -19,30 +19,20 @@ validator=$(realpath $3)
 shift 3
 
 dns_ip=127.0.1.1
-base_ip=127.0.2.1
-#dns_ip=127.0.0.1
-#base_ip=127.0.1.1
+base_ip=127.0.2
 
 tmp_resolv_conf=$(mktemp /tmp/resolv.conf.XXXXXX)
 echo "nameserver $dns_ip" > $tmp_resolv_conf
 
 sudo unshare -n -m /bin/bash <<EOF
 mount --bind $tmp_resolv_conf /etc/resolv.conf
-#route
-ip addr
-ip route
 ip link set lo up
-ip addr add $dns_ip/8 dev lo
-ip addr add $base_ip/8 dev lo
-ip addr add 127.0.2.2/32 dev lo
-ip route add 127.0.0.0/8 dev lo
-#sudo route add -net 127.0.0/8 lo
-ip addr
-ip route
+ip addr add $dns_ip/32 dev lo
+for i in {1..10}; do
+    ip addr add $base_ip.\$i/32 dev lo
+done
 cat /etc/resolv.conf
-RUST_LOG=debug $validator --dns-ip $dns_ip --base-ip $base_ip $scylla $vector_store $@
-ip addr
-ip route
+$validator --dns-ip $dns_ip --base-ip $base_ip.1 $scylla $vector_store $@
 EOF
 
 rm $tmp_resolv_conf

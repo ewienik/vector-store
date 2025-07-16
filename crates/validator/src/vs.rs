@@ -127,8 +127,8 @@ async fn process(msg: Vs, state: &mut State) {
 async fn start(vs_addr: SocketAddr, db_addr: SocketAddr, state: &mut State) {
     state.child = Some(
         Command::new(&state.path)
-            .env("VECTOR_STORE_URI", dbg!(vs_addr.to_string()))
-            .env("VECTOR_STORE_SCYLLADB_URI", dbg!(db_addr.to_string()))
+            .env("VECTOR_STORE_URI", vs_addr.to_string())
+            .env("VECTOR_STORE_SCYLLADB_URI", db_addr.to_string())
             .spawn()
             .expect("start: failed to spawn vector-store"),
     );
@@ -138,6 +138,9 @@ async fn stop(state: &mut State) {
     let Some(mut child) = state.child.take() else {
         return;
     };
+    child
+        .start_kill()
+        .expect("stop: failed to send SIGTERM to vector-store process");
     child
         .wait()
         .await

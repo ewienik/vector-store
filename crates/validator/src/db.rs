@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::process::Child;
@@ -16,14 +16,14 @@ pub(crate) enum Db {
     Start {
         vs_uri: String,
         // TODO: use a cluster
-        db_addr: SocketAddr,
+        db_ip: Ipv4Addr,
     },
     Stop,
 }
 
 pub(crate) trait DbExt {
     async fn version(&self) -> String;
-    async fn start(&self, vs_uri: String, db_addr: SocketAddr);
+    async fn start(&self, vs_uri: String, db_ip: Ipv4Addr);
     async fn stop(&self);
 }
 
@@ -37,8 +37,8 @@ impl DbExt for mpsc::Sender<Db> {
             .expect("DbExt::version: internal actor should send response")
     }
 
-    async fn start(&self, vs_uri: String, db_addr: SocketAddr) {
-        self.send(Db::Start { vs_uri, db_addr })
+    async fn start(&self, vs_uri: String, db_ip: Ipv4Addr) {
+        self.send(Db::Start { vs_uri, db_ip })
             .await
             .expect("DbExt::start: internal actor should receive request");
     }
@@ -111,8 +111,8 @@ async fn process(msg: Db, state: &mut State) {
                 .expect("process Db::Version: failed to send a response");
         }
 
-        Db::Start { vs_uri, db_addr } => {
-            start(vs_uri, db_addr, state).await;
+        Db::Start { vs_uri, db_ip } => {
+            start(vs_uri, db_ip, state).await;
         }
 
         Db::Stop {} => {
@@ -121,7 +121,7 @@ async fn process(msg: Db, state: &mut State) {
     }
 }
 
-async fn start(vs_uri: String, db_addr: SocketAddr, state: &mut State) {
+async fn start(vs_uri: String, db_ip: Ipv4Addr, state: &mut State) {
     let workdir = TempDir::new().expect("start: failed to create temporary directory for scylladb");
     state.child = Some(
         Command::new(&state.path)
@@ -129,9 +129,13 @@ async fn start(vs_uri: String, db_addr: SocketAddr, state: &mut State) {
             .arg("--workdir")
             .arg(workdir.path())
             .arg("--listen-address")
-            .arg(db_addr.ip().to_string())
-            .arg("--native-transport-port")
-            .arg(db_addr.port().to_string())
+            .arg(db_ip.to_string())
+            .arg("--rpc-address")
+            .arg(db_ip.to_string())
+            .arg("--api-address")
+            .arg(db_ip.to_string())
+            .arg("--seed-provider-parameters")
+            .arg(format!("seeds={db_ip}"))
             .arg("--vector-store-uri")
             .arg(vs_uri)
             .spawn()
@@ -144,6 +148,9 @@ async fn stop(state: &mut State) {
     let Some(mut child) = state.child.take() else {
         return;
     };
+    child
+        .start_kill()
+        .expect("stop: failed to send SIGTERM to scylladb process");
     child
         .wait()
         .await
