@@ -1,12 +1,16 @@
+use httpclient::HttpClient;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::process::Child;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tokio::time;
 use tracing::Instrument;
 use tracing::debug;
 use tracing::debug_span;
+use vector_store::node_state::Status;
 
 pub(crate) enum Vs {
     Version {
@@ -19,12 +23,16 @@ pub(crate) enum Vs {
     Stop {
         tx: oneshot::Sender<()>,
     },
+    WaitForReady {
+        tx: oneshot::Sender<bool>,
+    },
 }
 
 pub(crate) trait VsExt {
     async fn version(&self) -> String;
     async fn start(&self, vs_addr: SocketAddr, db_addr: SocketAddr);
     async fn stop(&self);
+    async fn wait_for_ready(&self) -> bool;
 }
 
 impl VsExt for mpsc::Sender<Vs> {
@@ -50,6 +58,15 @@ impl VsExt for mpsc::Sender<Vs> {
             .expect("VsExt::stop: internal actor should receive request");
         rx.await
             .expect("VsExt::stop: internal actor should send response");
+    }
+
+    async fn wait_for_ready(&self) -> bool {
+        let (tx, rx) = oneshot::channel();
+        self.send(Vs::WaitForReady { tx })
+            .await
+            .expect("VsExt::wait_for_ready: internal actor should receive request");
+        rx.await
+            .expect("VsExt::wait_for_ready: internal actor should send response")
     }
 }
 
@@ -81,6 +98,7 @@ pub(crate) async fn new(path: PathBuf) -> mpsc::Sender<Vs> {
 struct State {
     path: PathBuf,
     child: Option<Child>,
+    client: Option<HttpClient>,
     version: String,
 }
 
@@ -101,6 +119,7 @@ impl State {
             path,
             version,
             child: None,
+            client: None,
         }
     }
 }
@@ -121,6 +140,11 @@ async fn process(msg: Vs, state: &mut State) {
             tx.send(())
                 .expect("process Vs::Stop: failed to send a response");
         }
+
+        Vs::WaitForReady { tx } => {
+            tx.send(wait_for_ready(state).await)
+                .expect("process Vs::WaitForReady: failed to send a response");
+        }
     }
 }
 
@@ -132,6 +156,7 @@ async fn start(vs_addr: SocketAddr, db_addr: SocketAddr, state: &mut State) {
             .spawn()
             .expect("start: failed to spawn vector-store"),
     );
+    state.client = Some(HttpClient::new(vs_addr));
 }
 
 async fn stop(state: &mut State) {
@@ -146,4 +171,18 @@ async fn stop(state: &mut State) {
         .await
         .expect("stop: failed to wait for vector-store process to exit");
     state.child = None;
+    state.client = None;
+}
+
+async fn wait_for_ready(state: &State) -> bool {
+    let Some(ref client) = state.client else {
+        return false;
+    };
+
+    loop {
+        if matches!(client.status().await, Status::Serving) {
+            return true;
+        }
+        time::sleep(Duration::from_millis(100)).await;
+    }
 }

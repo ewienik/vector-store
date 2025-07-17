@@ -46,6 +46,8 @@ async fn init(actors: TestActors) {
         .vs
         .start((vs_ip, VS_PORT).into(), (db_ip, DB_PORT).into())
         .await;
+    assert!(actors.vs.wait_for_ready().await);
+
     info!("finished");
 }
 
