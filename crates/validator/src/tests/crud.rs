@@ -4,15 +4,21 @@ use crate::ip::IpExt;
 use crate::test_case::TestActors;
 use crate::test_case::TestCase;
 use crate::vs::VsExt;
+use httpclient::HttpClient;
+use scylla::client::session_builder::SessionBuilder;
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::info;
 
 pub(crate) async fn new() -> TestCase {
+    let timeout = Duration::from_secs(30);
     TestCase::empty()
-        .with_init(init)
-        .with_cleanup(cleanup)
+        .with_init(timeout, init)
+        .with_cleanup(timeout, cleanup)
         .with_test(
-            "create_search_delete_single_index",
-            create_search_delete_single_index,
+            "create_delete_single_index",
+            timeout,
+            create_delete_single_index,
         )
 }
 
@@ -59,8 +65,64 @@ async fn cleanup(actors: TestActors) {
     info!("finished");
 }
 
-async fn create_search_delete_single_index(_actors: TestActors) {
+async fn create_delete_single_index(actors: TestActors) {
     info!("started");
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    let session = Arc::new(
+        SessionBuilder::new()
+            .known_node(actors.ip.calculate(DB_OCTET).await.to_string())
+            .build()
+            .await
+            .expect("failed to create session"),
+    );
+    let client = HttpClient::new((actors.ip.calculate(VS_OCTET).await, VS_PORT).into());
+
+    session.query_unpaged(
+        "CREATE KEYSPACE ks WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}",
+        (),
+    ).await.expect("failed to create a keyspace");
+
+    session
+        .use_keyspace("ks", false)
+        .await
+        .expect("failed to use a keyspace");
+
+    session
+        .query_unpaged(
+            "
+            CREATE TABLE tbl (id BIGINT PRIMARY KEY, embedding VECTOR<FLOAT, 3>)
+            WITH cdc = {'enabled': true }
+            ",
+            (),
+        )
+        .await
+        .expect("failed to create a table");
+
+    session
+        .query_unpaged(
+            "CREATE INDEX idx ON tbl(embedding) USING 'vector_index'",
+            (),
+        )
+        .await
+        .expect("failed to create an index");
+
+    while client.indexes().await.is_empty() {}
+    let indexes = client.indexes().await;
+    assert_eq!(indexes.len(), 1);
+    assert_eq!(indexes[0].keyspace.as_ref(), "ks");
+    assert_eq!(indexes[0].index.as_ref(), "idx");
+
+    session
+        .query_unpaged("DROP INDEX idx", ())
+        .await
+        .expect("failed to drop an index");
+
+    while !client.indexes().await.is_empty() {}
+
+    session
+        .query_unpaged("DROP KEYSPACE ks", ())
+        .await
+        .expect("failed to drop a keyspace");
+
     info!("finished");
 }
