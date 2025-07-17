@@ -18,6 +18,7 @@ bimap = "0.6.3"
 derive_more = { version = "2.0.1", features = ["full"] }
 dotenvy = "0.15.7"
 futures = "0.3.31"
+httpclient = { path = "crates/httpclient" }
 itertools = "0.14.0"
 macros = { path = "crates/macros" }
 ntest = "0.9.3"
@@ -44,3 +45,4 @@ utoipa = { version = "5.3.1", features = ["axum_extras"] }
 utoipa-axum = "0.2.0"
 utoipa-swagger-ui = { version = "9.0.0", features = ["axum"] }
 uuid = "1.16.0"
+vector-store = { path = "crates/vector-store" }

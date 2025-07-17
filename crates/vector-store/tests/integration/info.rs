@@ -4,7 +4,7 @@
  */
 
 use crate::db_basic;
-use crate::httpclient::HttpClient;
+use httpclient::HttpClient;
 use std::net::SocketAddr;
 
 #[tokio::test]

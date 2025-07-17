@@ -18,20 +18,20 @@ use vector_store::httproutes::PostIndexAnnRequest;
 use vector_store::httproutes::PostIndexAnnResponse;
 use vector_store::node_state::Status;
 
-pub(crate) struct HttpClient {
+pub struct HttpClient {
     client: Client,
     url_api: String,
 }
 
 impl HttpClient {
-    pub(crate) fn new(addr: SocketAddr) -> Self {
+    pub fn new(addr: SocketAddr) -> Self {
         Self {
             url_api: format!("http://{addr}/api/v1"),
             client: Client::new(),
         }
     }
 
-    pub(crate) async fn indexes(&self) -> Vec<IndexInfo> {
+    pub async fn indexes(&self) -> Vec<IndexInfo> {
         self.client
             .get(format!("{}/indexes", self.url_api))
             .send()
@@ -42,7 +42,7 @@ impl HttpClient {
             .unwrap()
     }
 
-    pub(crate) async fn ann(
+    pub async fn ann(
         &self,
         index: &IndexMetadata,
         embedding: Embedding,
@@ -57,7 +57,7 @@ impl HttpClient {
         (resp.primary_keys, resp.distances)
     }
 
-    pub(crate) async fn post_ann(
+    pub async fn post_ann(
         &self,
         index: &IndexMetadata,
         embedding: Embedding,
@@ -74,7 +74,7 @@ impl HttpClient {
             .unwrap()
     }
 
-    pub(crate) async fn count(&self, index: &IndexMetadata) -> Option<usize> {
+    pub async fn count(&self, index: &IndexMetadata) -> Option<usize> {
         self.client
             .get(format!(
                 "{}/indexes/{}/{}/count",
@@ -88,7 +88,7 @@ impl HttpClient {
             .ok()
     }
 
-    pub(crate) async fn info(&self) -> InfoResponse {
+    pub async fn info(&self) -> InfoResponse {
         self.client
             .get(format!("{}/info", self.url_api))
             .send()
@@ -99,7 +99,7 @@ impl HttpClient {
             .unwrap()
     }
 
-    pub(crate) async fn status(&self) -> Status {
+    pub async fn status(&self) -> Status {
         self.client
             .get(format!("{}/status", self.url_api))
             .send()
