@@ -12,6 +12,7 @@ use crate::engine::EngineExt;
 use crate::node_state::Event;
 use crate::node_state::NodeState;
 use crate::node_state::NodeStateExt;
+use anyhow::bail;
 use futures::StreamExt;
 use futures::stream;
 use scylla::value::CqlTimeuuid;
@@ -159,8 +160,9 @@ async fn get_indexes(db: &Sender<Db>) -> anyhow::Result<HashSet<IndexMetadata>> 
         };
 
         if !db.is_valid_index(metadata.clone()).await {
-            debug!("get_indexes: not valid index {}", metadata.id());
-            continue;
+            let msg = format!("get_indexes: not valid index {}", metadata.id(),);
+            debug!(msg);
+            bail!(msg);
         }
 
         indexes.insert(metadata);
