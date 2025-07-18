@@ -31,9 +31,19 @@ struct Args {
     #[arg(short, long, default_value = "127.0.2.1")]
     base_ip: Ipv4Addr,
 
+    #[arg(short, long, default_value = "conf/scylla.yaml")]
+    scylla_conf: PathBuf,
+
     scylla: PathBuf,
 
     vector_store: PathBuf,
+}
+
+async fn file_exists(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path).await else {
+        return false;
+    };
+    metadata.is_file()
 }
 
 async fn executable_exists(path: &Path) -> bool {
@@ -76,7 +86,7 @@ async fn main() {
     validate_address(args.dns_ip, args.base_ip);
 
     let dns = dns::new(args.dns_ip).await;
-    let db = db::new(args.scylla).await;
+    let db = db::new(args.scylla, args.scylla_conf).await;
     let vs = vs::new(args.vector_store).await;
     let ip = ip::new(args.base_ip).await;
 

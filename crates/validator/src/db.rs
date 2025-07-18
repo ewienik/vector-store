@@ -65,15 +65,19 @@ impl DbExt for mpsc::Sender<Db> {
     }
 }
 
-pub(crate) async fn new(path: PathBuf) -> mpsc::Sender<Db> {
+pub(crate) async fn new(path: PathBuf, conf: PathBuf) -> mpsc::Sender<Db> {
     let (tx, mut rx) = mpsc::channel(10);
 
     assert!(
         crate::executable_exists(&path).await,
         "scylla executable '{path:?}' does not exist"
     );
+    assert!(
+        crate::file_exists(&conf).await,
+        "scylla config '{path:?}' does not exist"
+    );
 
-    let mut state = State::new(path).await;
+    let mut state = State::new(path, conf).await;
 
     tokio::spawn(
         async move {
@@ -92,6 +96,7 @@ pub(crate) async fn new(path: PathBuf) -> mpsc::Sender<Db> {
 
 struct State {
     path: PathBuf,
+    conf: PathBuf,
     db_ip: Option<Ipv4Addr>,
     child: Option<Child>,
     workdir: Option<TempDir>,
@@ -99,7 +104,7 @@ struct State {
 }
 
 impl State {
-    async fn new(path: PathBuf) -> Self {
+    async fn new(path: PathBuf, conf: PathBuf) -> Self {
         let version = String::from_utf8_lossy(
             &Command::new(&path)
                 .arg("--version")
@@ -113,6 +118,7 @@ impl State {
 
         Self {
             path,
+            conf,
             version,
             db_ip: None,
             child: None,
@@ -148,6 +154,8 @@ async fn start(vs_uri: String, db_ip: Ipv4Addr, state: &mut State) {
     state.child = Some(
         Command::new(&state.path)
             .arg("--overprovisioned")
+            .arg("--options-file")
+            .arg(&state.conf)
             .arg("--workdir")
             .arg(workdir.path())
             .arg("--listen-address")
@@ -160,6 +168,8 @@ async fn start(vs_uri: String, db_ip: Ipv4Addr, state: &mut State) {
             .arg(format!("seeds={db_ip}"))
             .arg("--vector-store-uri")
             .arg(vs_uri)
+            .arg("--developer-mode")
+            .arg("true")
             .spawn()
             .expect("start: failed to spawn scylladb"),
     );
