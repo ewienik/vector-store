@@ -14,8 +14,6 @@ pub(crate) async fn new() -> TestCase {
     TestCase::empty()
         .with_init(timeout, init)
         .with_cleanup(timeout, cleanup)
-        .with_test("no_panic", timeout, no_panic)
-        .with_test("with_panic", timeout, with_panic)
         .with_test(
             "create_delete_single_index",
             timeout,
@@ -64,18 +62,6 @@ async fn cleanup(actors: TestActors) {
     actors.vs.stop().await;
     actors.db.stop().await;
     info!("finished");
-}
-
-async fn no_panic(_: TestActors) {
-    info!("started");
-    tokio::time::sleep(Duration::from_secs(5)).await;
-    info!("stopped");
-}
-
-async fn with_panic(_: TestActors) {
-    info!("started");
-    tokio::time::sleep(Duration::from_secs(5)).await;
-    panic!("This test is expected to panic");
 }
 
 async fn create_delete_single_index(actors: TestActors) {
