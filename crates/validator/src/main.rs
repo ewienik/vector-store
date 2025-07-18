@@ -1,7 +1,6 @@
 mod db;
 mod dns;
 mod ip;
-mod test_case;
 mod tests;
 mod vs;
 
@@ -14,7 +13,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use test_case::TestActors;
+use tests::TestActors;
 use tokio::fs;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
