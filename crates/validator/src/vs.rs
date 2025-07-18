@@ -1,6 +1,7 @@
 use httpclient::HttpClient;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Child;
 use tokio::process::Command;
@@ -70,7 +71,7 @@ impl VsExt for mpsc::Sender<Vs> {
     }
 }
 
-pub(crate) async fn new(path: PathBuf) -> mpsc::Sender<Vs> {
+pub(crate) async fn new(path: PathBuf, verbose: bool) -> mpsc::Sender<Vs> {
     let (tx, mut rx) = mpsc::channel(10);
 
     assert!(
@@ -78,7 +79,7 @@ pub(crate) async fn new(path: PathBuf) -> mpsc::Sender<Vs> {
         "vector-store executable '{path:?}' does not exist"
     );
 
-    let mut state = State::new(path).await;
+    let mut state = State::new(path, verbose).await;
 
     tokio::spawn(
         async move {
@@ -100,10 +101,11 @@ struct State {
     child: Option<Child>,
     client: Option<HttpClient>,
     version: String,
+    verbose: bool,
 }
 
 impl State {
-    async fn new(path: PathBuf) -> Self {
+    async fn new(path: PathBuf, verbose: bool) -> Self {
         let version = String::from_utf8_lossy(
             &Command::new(&path)
                 .arg("--version")
@@ -120,6 +122,7 @@ impl State {
             version,
             child: None,
             client: None,
+            verbose,
         }
     }
 }
@@ -149,9 +152,12 @@ async fn process(msg: Vs, state: &mut State) {
 }
 
 async fn start(vs_addr: SocketAddr, db_addr: SocketAddr, state: &mut State) {
+    let mut cmd = Command::new(&state.path);
+    if !state.verbose {
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
     state.child = Some(
-        Command::new(&state.path)
-            .env("VECTOR_STORE_URI", vs_addr.to_string())
+        cmd.env("VECTOR_STORE_URI", vs_addr.to_string())
             .env("VECTOR_STORE_SCYLLADB_URI", db_addr.to_string())
             .spawn()
             .expect("start: failed to spawn vector-store"),

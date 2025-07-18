@@ -33,6 +33,9 @@ struct Args {
     #[arg(short, long, default_value = "conf/scylla.yaml")]
     scylla_conf: PathBuf,
 
+    #[arg(short, long, default_value = "false")]
+    verbose: bool,
+
     scylla: PathBuf,
 
     vector_store: PathBuf,
@@ -85,8 +88,8 @@ async fn main() {
     validate_address(args.dns_ip, args.base_ip);
 
     let dns = dns::new(args.dns_ip).await;
-    let db = db::new(args.scylla, args.scylla_conf).await;
-    let vs = vs::new(args.vector_store).await;
+    let db = db::new(args.scylla, args.scylla_conf, args.verbose).await;
+    let vs = vs::new(args.vector_store, args.verbose).await;
     let ip = ip::new(args.base_ip).await;
 
     info!(

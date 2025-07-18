@@ -1,5 +1,6 @@
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::process::Child;
@@ -65,7 +66,7 @@ impl DbExt for mpsc::Sender<Db> {
     }
 }
 
-pub(crate) async fn new(path: PathBuf, conf: PathBuf) -> mpsc::Sender<Db> {
+pub(crate) async fn new(path: PathBuf, conf: PathBuf, verbose: bool) -> mpsc::Sender<Db> {
     let (tx, mut rx) = mpsc::channel(10);
 
     assert!(
@@ -77,7 +78,7 @@ pub(crate) async fn new(path: PathBuf, conf: PathBuf) -> mpsc::Sender<Db> {
         "scylla config '{path:?}' does not exist"
     );
 
-    let mut state = State::new(path, conf).await;
+    let mut state = State::new(path, conf, verbose).await;
 
     tokio::spawn(
         async move {
@@ -101,10 +102,11 @@ struct State {
     child: Option<Child>,
     workdir: Option<TempDir>,
     version: String,
+    verbose: bool,
 }
 
 impl State {
-    async fn new(path: PathBuf, conf: PathBuf) -> Self {
+    async fn new(path: PathBuf, conf: PathBuf, verbose: bool) -> Self {
         let version = String::from_utf8_lossy(
             &Command::new(&path)
                 .arg("--version")
@@ -123,6 +125,7 @@ impl State {
             db_ip: None,
             child: None,
             workdir: None,
+            verbose,
         }
     }
 }
@@ -151,9 +154,12 @@ async fn process(msg: Db, state: &mut State) {
 
 async fn start(vs_uri: String, db_ip: Ipv4Addr, state: &mut State) {
     let workdir = TempDir::new().expect("start: failed to create temporary directory for scylladb");
+    let mut cmd = Command::new(&state.path);
+    if !state.verbose {
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
     state.child = Some(
-        Command::new(&state.path)
-            .arg("--overprovisioned")
+        cmd.arg("--overprovisioned")
             .arg("--options-file")
             .arg(&state.conf)
             .arg("--workdir")
