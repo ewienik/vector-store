@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
+use crate::db::DbExt;
 use crate::dns::DnsExt;
 use crate::ip::IpExt;
 use crate::tests::*;
@@ -19,26 +20,35 @@ pub(crate) async fn new() -> TestCase {
 
 const VS_NAME: &str = "vs";
 
+const VS_PORT: u16 = 6080;
+
 const VS_OCTET: u8 = 1;
+const DB_OCTET: u8 = 2;
 
 async fn init(actors: TestActors) {
     info!("started");
     let vs_ip = actors.ip.calculate(VS_OCTET).await;
 
     actors.dns.upsert(VS_NAME.to_string(), Some(vs_ip)).await;
-    info!(
-        "dns entry created for {}.{}: {}",
+
+    let vs_url = format!(
+        "http://{}.{}:{}",
         VS_NAME,
         actors.dns.domain().await,
-        vs_ip
+        VS_PORT
     );
 
+    let db_ip = actors.ip.calculate(DB_OCTET).await;
+
+    actors.db.start(vs_url, db_ip).await;
+    assert!(actors.db.wait_for_ready().await);
     info!("finished");
 }
 
 async fn cleanup(actors: TestActors) {
     info!("started");
     actors.dns.upsert(VS_NAME.to_string(), None).await;
+    actors.db.stop().await;
     info!("finished");
 }
 

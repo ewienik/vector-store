@@ -3,16 +3,22 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
+mod db;
 mod dns;
 mod ip;
 mod tests;
 
 use clap::Parser;
+use db::DbExt;
 use dns::DnsExt;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tests::TestActors;
+use tokio::fs;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
@@ -26,6 +32,28 @@ struct Args {
 
     #[arg(short, long, default_value = "127.0.2.1")]
     base_ip: Ipv4Addr,
+
+    #[arg(short, long, default_value = "conf/scylla.yaml")]
+    scylla_conf: PathBuf,
+
+    #[arg(short, long, default_value = "false")]
+    verbose: bool,
+
+    scylla: PathBuf,
+}
+
+async fn file_exists(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path).await else {
+        return false;
+    };
+    metadata.is_file()
+}
+
+async fn executable_exists(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path).await else {
+        return false;
+    };
+    metadata.is_file() && (metadata.permissions().mode() & 0o111 != 0)
 }
 
 fn validate_address(dns_ip: Ipv4Addr, base_ip: Ipv4Addr) {
@@ -62,6 +90,7 @@ async fn main() {
 
     let dns = dns::new(args.dns_ip).await;
     let ip = ip::new(args.base_ip).await;
+    let db = db::new(args.scylla, args.scylla_conf, args.verbose).await;
 
     info!(
         "{} version: {}",
@@ -69,9 +98,17 @@ async fn main() {
         env!("CARGO_PKG_VERSION")
     );
     info!("dns version: {}", dns.version().await);
+    info!("scylla version: {}", db.version().await);
 
     let test_cases = tests::register().await;
 
     // TODO: implement a filter using cmdline arguments
-    assert!(tests::run(TestActors { dns, ip }, test_cases, Arc::new(HashMap::new())).await);
+    assert!(
+        tests::run(
+            TestActors { dns, ip, db },
+            test_cases,
+            Arc::new(HashMap::new())
+        )
+        .await
+    );
 }

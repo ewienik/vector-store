@@ -5,6 +5,7 @@
 
 mod crud;
 
+use crate::db::Db;
 use crate::dns::Dns;
 use crate::ip::Ip;
 use futures::FutureExt;
@@ -28,6 +29,7 @@ use tracing::info_span;
 pub(crate) struct TestActors {
     pub(crate) dns: mpsc::Sender<Dns>,
     pub(crate) ip: mpsc::Sender<Ip>,
+    pub(crate) db: mpsc::Sender<Db>,
 }
 
 type TestFuture = BoxFuture<'static, ()>;
