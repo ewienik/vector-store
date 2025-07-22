@@ -19,6 +19,7 @@ clap = { version = "4.5.40", features = ["derive"] }
 derive_more = { version = "2.0.1", features = ["full"] }
 dotenvy = "0.15.7"
 futures = "0.3.31"
+hickory-server = "0.25.2"
 itertools = "0.14.0"
 macros = { path = "crates/macros" }
 mockall = "0.13.1"
