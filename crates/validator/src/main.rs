@@ -3,10 +3,14 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
+mod dns;
+mod ip;
 mod tests;
 
 use clap::Parser;
+use dns::DnsExt;
 use std::collections::HashMap;
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tests::TestActors;
 use tracing::info;
@@ -16,7 +20,30 @@ use tracing_subscriber::prelude::*;
 
 #[derive(Debug, Parser)]
 #[clap(version)]
-struct Args {}
+struct Args {
+    #[arg(short, long, default_value = "127.0.1.1")]
+    dns_ip: Ipv4Addr,
+
+    #[arg(short, long, default_value = "127.0.2.1")]
+    base_ip: Ipv4Addr,
+}
+
+fn validate_address(dns_ip: Ipv4Addr, base_ip: Ipv4Addr) {
+    assert!(
+        dns_ip.is_loopback(),
+        "DNS server should listen on a localhost"
+    );
+    assert!(
+        base_ip.is_loopback(),
+        "DNS server should serve addresses from a localhost"
+    );
+    let dns_octets = dns_ip.octets();
+    let base_octets = base_ip.octets();
+    assert!(
+        dns_octets[1] != base_octets[1] || dns_octets[2] != base_octets[2],
+        "DNS server should serve addresses from a different subnet than its own"
+    );
+}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -29,16 +56,22 @@ async fn main() {
         .with(fmt::layer().with_target(false))
         .init();
 
-    let _args = Args::parse();
+    let args = Args::parse();
+
+    validate_address(args.dns_ip, args.base_ip);
+
+    let dns = dns::new(args.dns_ip).await;
+    let ip = ip::new(args.base_ip).await;
 
     info!(
         "{} version: {}",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION")
     );
+    info!("dns version: {}", dns.version().await);
 
     let test_cases = tests::register().await;
 
     // TODO: implement a filter using cmdline arguments
-    assert!(tests::run(TestActors {}, test_cases, Arc::new(HashMap::new())).await);
+    assert!(tests::run(TestActors { dns, ip }, test_cases, Arc::new(HashMap::new())).await);
 }
