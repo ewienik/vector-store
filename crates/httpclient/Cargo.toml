@@ -1,0 +1,12 @@
+# Copyright 2025-present ScyllaDB
+# SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
+
+[package]
+name = "httpclient"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+reqwest.workspace = true
+serde_json.workspace = true
+vector-store.workspace = true

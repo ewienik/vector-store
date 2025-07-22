@@ -4,16 +4,11 @@
  */
 
 mod db_basic;
-mod httpclient;
-
-mod usearch;
-
-mod mock_opensearch;
-mod opensearch;
-
 mod info;
-
+mod mock_opensearch;
 mod openapi;
+mod opensearch;
+mod usearch;
 
 use std::sync::Once;
 use std::time::Duration;

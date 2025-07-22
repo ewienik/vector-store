@@ -6,10 +6,10 @@
 use crate::db_basic;
 use crate::db_basic::Index;
 use crate::db_basic::Table;
-use crate::httpclient::HttpClient;
 use crate::mock_opensearch;
 use crate::wait_for;
 use ::time::OffsetDateTime;
+use httpclient::HttpClient;
 use scylla::value::CqlValue;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
