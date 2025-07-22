@@ -3154,11 +3154,13 @@ dependencies = [
  "clap",
  "futures",
  "hickory-server",
+ "httpclient",
  "scylla",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "vector-store",
 ]
 
 [[package]]
@@ -3169,6 +3171,7 @@ dependencies = [
  "async-trait",
  "axum",
  "bimap",
+ "clap",
  "dashmap 6.1.0",
  "derive_more",
  "dotenvy",

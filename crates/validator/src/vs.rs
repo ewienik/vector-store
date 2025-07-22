@@ -1,0 +1,194 @@
+use httpclient::HttpClient;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::process::Stdio;
+use std::time::Duration;
+use tokio::process::Child;
+use tokio::process::Command;
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
+use tokio::time;
+use tracing::Instrument;
+use tracing::debug;
+use tracing::debug_span;
+use vector_store::node_state::Status;
+
+pub(crate) enum Vs {
+    Version {
+        tx: oneshot::Sender<String>,
+    },
+    Start {
+        vs_addr: SocketAddr,
+        db_addr: SocketAddr,
+    },
+    Stop {
+        tx: oneshot::Sender<()>,
+    },
+    WaitForReady {
+        tx: oneshot::Sender<bool>,
+    },
+}
+
+pub(crate) trait VsExt {
+    async fn version(&self) -> String;
+    async fn start(&self, vs_addr: SocketAddr, db_addr: SocketAddr);
+    async fn stop(&self);
+    async fn wait_for_ready(&self) -> bool;
+}
+
+impl VsExt for mpsc::Sender<Vs> {
+    async fn version(&self) -> String {
+        let (tx, rx) = oneshot::channel();
+        self.send(Vs::Version { tx })
+            .await
+            .expect("VsExt::version: internal actor should receive request");
+        rx.await
+            .expect("VsExt::version: internal actor should send response")
+    }
+
+    async fn start(&self, vs_addr: SocketAddr, db_addr: SocketAddr) {
+        self.send(Vs::Start { vs_addr, db_addr })
+            .await
+            .expect("VsExt::start: internal actor should receive request");
+    }
+
+    async fn stop(&self) {
+        let (tx, rx) = oneshot::channel();
+        self.send(Vs::Stop { tx })
+            .await
+            .expect("VsExt::stop: internal actor should receive request");
+        rx.await
+            .expect("VsExt::stop: internal actor should send response");
+    }
+
+    async fn wait_for_ready(&self) -> bool {
+        let (tx, rx) = oneshot::channel();
+        self.send(Vs::WaitForReady { tx })
+            .await
+            .expect("VsExt::wait_for_ready: internal actor should receive request");
+        rx.await
+            .expect("VsExt::wait_for_ready: internal actor should send response")
+    }
+}
+
+pub(crate) async fn new(path: PathBuf, verbose: bool) -> mpsc::Sender<Vs> {
+    let (tx, mut rx) = mpsc::channel(10);
+
+    assert!(
+        crate::executable_exists(&path).await,
+        "vector-store executable '{path:?}' does not exist"
+    );
+
+    let mut state = State::new(path, verbose).await;
+
+    tokio::spawn(
+        async move {
+            debug!("starting");
+
+            while let Some(msg) = rx.recv().await {
+                process(msg, &mut state).await;
+            }
+            debug!("starting");
+        }
+        .instrument(debug_span!("vs")),
+    );
+
+    tx
+}
+
+struct State {
+    path: PathBuf,
+    child: Option<Child>,
+    client: Option<HttpClient>,
+    version: String,
+    verbose: bool,
+}
+
+impl State {
+    async fn new(path: PathBuf, verbose: bool) -> Self {
+        let version = String::from_utf8_lossy(
+            &Command::new(&path)
+                .arg("--version")
+                .output()
+                .await
+                .expect("vs: State::new: failed to execute vector-store")
+                .stdout,
+        )
+        .trim()
+        .to_string();
+
+        Self {
+            path,
+            version,
+            child: None,
+            client: None,
+            verbose,
+        }
+    }
+}
+
+async fn process(msg: Vs, state: &mut State) {
+    match msg {
+        Vs::Version { tx } => {
+            tx.send(state.version.clone())
+                .expect("process Vs::Version: failed to send a response");
+        }
+
+        Vs::Start { vs_addr, db_addr } => {
+            start(vs_addr, db_addr, state).await;
+        }
+
+        Vs::Stop { tx } => {
+            stop(state).await;
+            tx.send(())
+                .expect("process Vs::Stop: failed to send a response");
+        }
+
+        Vs::WaitForReady { tx } => {
+            tx.send(wait_for_ready(state).await)
+                .expect("process Vs::WaitForReady: failed to send a response");
+        }
+    }
+}
+
+async fn start(vs_addr: SocketAddr, db_addr: SocketAddr, state: &mut State) {
+    let mut cmd = Command::new(&state.path);
+    if !state.verbose {
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+    state.child = Some(
+        cmd.env("VECTOR_STORE_URI", vs_addr.to_string())
+            .env("VECTOR_STORE_SCYLLADB_URI", db_addr.to_string())
+            .spawn()
+            .expect("start: failed to spawn vector-store"),
+    );
+    state.client = Some(HttpClient::new(vs_addr));
+}
+
+async fn stop(state: &mut State) {
+    let Some(mut child) = state.child.take() else {
+        return;
+    };
+    child
+        .start_kill()
+        .expect("stop: failed to send SIGTERM to vector-store process");
+    child
+        .wait()
+        .await
+        .expect("stop: failed to wait for vector-store process to exit");
+    state.child = None;
+    state.client = None;
+}
+
+async fn wait_for_ready(state: &State) -> bool {
+    let Some(ref client) = state.client else {
+        return false;
+    };
+
+    loop {
+        if matches!(client.status().await, Status::Serving) {
+            return true;
+        }
+        time::sleep(Duration::from_millis(100)).await;
+    }
+}

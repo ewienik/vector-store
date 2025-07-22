@@ -7,6 +7,7 @@ mod db;
 mod dns;
 mod ip;
 mod tests;
+mod vs;
 
 use clap::Parser;
 use db::DbExt;
@@ -23,6 +24,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
+use vs::VsExt;
 
 #[derive(Debug, Parser)]
 #[clap(version)]
@@ -40,6 +42,8 @@ struct Args {
     verbose: bool,
 
     scylla: PathBuf,
+
+    vector_store: PathBuf,
 }
 
 async fn file_exists(path: &Path) -> bool {
@@ -91,6 +95,7 @@ async fn main() {
     let dns = dns::new(args.dns_ip).await;
     let ip = ip::new(args.base_ip).await;
     let db = db::new(args.scylla, args.scylla_conf, args.verbose).await;
+    let vs = vs::new(args.vector_store, args.verbose).await;
 
     info!(
         "{} version: {}",
@@ -99,13 +104,14 @@ async fn main() {
     );
     info!("dns version: {}", dns.version().await);
     info!("scylla version: {}", db.version().await);
+    info!("vector-store version: {}", vs.version().await);
 
     let test_cases = tests::register().await;
 
     // TODO: implement a filter using cmdline arguments
     assert!(
         tests::run(
-            TestActors { dns, ip, db },
+            TestActors { dns, ip, db, vs },
             test_cases,
             Arc::new(HashMap::new())
         )

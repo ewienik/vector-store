@@ -8,6 +8,7 @@ mod crud;
 use crate::db::Db;
 use crate::dns::Dns;
 use crate::ip::Ip;
+use crate::vs::Vs;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use futures::stream;
@@ -30,6 +31,7 @@ pub(crate) struct TestActors {
     pub(crate) dns: mpsc::Sender<Dns>,
     pub(crate) ip: mpsc::Sender<Ip>,
     pub(crate) db: mpsc::Sender<Db>,
+    pub(crate) vs: mpsc::Sender<Vs>,
 }
 
 type TestFuture = BoxFuture<'static, ()>;
