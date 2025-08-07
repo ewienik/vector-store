@@ -32,6 +32,7 @@ use axum::http::header;
 use axum::response;
 use axum::response::IntoResponse;
 use axum::response::Response;
+use axum::routing::delete;
 use axum::routing::get;
 use itertools::Itertools;
 use macros::ToEnumSchema;
@@ -109,6 +110,7 @@ pub(crate) fn new(
     let (router, api) = new_open_api_router();
     let router = router
         .route("/metrics", get(get_metrics))
+        .route("/metrics", delete(delete_metrics))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
@@ -291,6 +293,12 @@ async fn get_metrics(
     response_headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
 
     (StatusCode::OK, response_headers, buffer)
+}
+
+async fn delete_metrics(State(state): State<RoutesInnerState>) {
+    state.metrics.latency.reset();
+    state.metrics.size.reset();
+    state.metrics.modified.reset();
 }
 
 #[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
