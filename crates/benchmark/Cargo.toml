@@ -1,0 +1,23 @@
+# Copyright 2025-present ScyllaDB
+# SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
+
+[package]
+name = "vector-search-benchmark"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+arrow-array.workspace = true
+clap.workspace = true
+futures.workspace = true
+httpclient.workspace = true
+humantime.workspace = true
+itertools.workspace = true
+parquet.workspace = true
+rand.workspace = true
+scylla.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
