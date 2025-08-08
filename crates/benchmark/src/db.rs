@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
+use crate::INDEX;
 use crate::KEYSPACE;
+use crate::MetricType;
 use crate::TABLE;
 use futures::Stream;
 use futures::StreamExt;
@@ -70,6 +72,38 @@ impl Scylla {
                     {VECTOR} vector<float, {dimension}>,
                 )
                 ",
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+    }
+
+    pub(crate) async fn create_index(
+        &self,
+        metric_type: MetricType,
+        m: usize,
+        ef_construction: usize,
+        ef_search: usize,
+    ) {
+        let metric_type = match metric_type {
+            MetricType::Euclidean => "EUCLIDEAN",
+            MetricType::Cosine => "COSINE",
+            MetricType::DotProduct => "DOT_PRODUCT",
+        };
+        self.0
+            .session
+            .query_unpaged(
+                format!(
+                    "
+                CREATE CUSTOM INDEX {INDEX} ON {KEYSPACE}.{TABLE} ({VECTOR})
+                USING 'vector_index' WITH OPTIONS = {{
+                    'similarity_function': '{metric_type}',
+                    'maximum_node_connections': '{m}',
+                    'construction_beam_width': '{ef_construction}',
+                    'search_beam_width': '{ef_search}'
+               }}
+               "
                 ),
                 &[],
             )
