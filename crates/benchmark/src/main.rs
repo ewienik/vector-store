@@ -73,6 +73,11 @@ enum Command {
         #[clap(long)]
         ef_search: usize,
     },
+
+    DropTable {
+        #[clap(long)]
+        scylla: SocketAddr,
+    },
 }
 
 #[tokio::main]
@@ -123,6 +128,15 @@ async fn main() {
             })
             .await;
             info!("Build Index took {duration:.2?}");
+        }
+
+        Command::DropTable { scylla } => {
+            let scylla = Scylla::new(scylla).await;
+            let (duration, _) = measure_duration(async move {
+                scylla.drop_table().await;
+            })
+            .await;
+            info!("Drop Table took {duration:.2?}");
         }
     };
 }

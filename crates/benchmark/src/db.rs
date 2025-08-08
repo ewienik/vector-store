@@ -79,6 +79,14 @@ impl Scylla {
             .unwrap();
     }
 
+    pub(crate) async fn drop_table(&self) {
+        self.0
+            .session
+            .query_unpaged(format!("DROP KEYSPACE IF EXISTS {KEYSPACE}"), &[])
+            .await
+            .unwrap();
+    }
+
     pub(crate) async fn create_index(
         &self,
         metric_type: MetricType,
