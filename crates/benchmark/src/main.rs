@@ -10,6 +10,7 @@ mod vs;
 use crate::db::Scylla;
 use clap::Parser;
 use clap::Subcommand;
+use clap::ValueEnum;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -21,11 +22,20 @@ use tracing_subscriber::prelude::*;
 
 const KEYSPACE: &str = "vsb_keyspace";
 const TABLE: &str = "vsb_table";
+const INDEX: &str = "vsb_idex";
+
 #[derive(Parser)]
 #[clap(version)]
 struct Args {
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+enum MetricType {
+    Cosine,
+    Euclidean,
+    DotProduct,
 }
 
 #[derive(Subcommand)]
@@ -39,6 +49,29 @@ enum Command {
 
         #[clap(long, value_parser = clap::value_parser!(u32).range(1..=1_000_000))]
         concurrency: u32,
+    },
+
+    BuildIndex {
+        #[clap(long)]
+        data_dir: PathBuf,
+
+        #[clap(long)]
+        scylla: SocketAddr,
+
+        #[clap(long, required = true)]
+        vector_store: Vec<SocketAddr>,
+
+        #[clap(long)]
+        metric_type: MetricType,
+
+        #[clap(long)]
+        m: usize,
+
+        #[clap(long)]
+        ef_construction: usize,
+
+        #[clap(long)]
+        ef_search: usize,
     },
 }
 
@@ -68,6 +101,28 @@ async fn main() {
             })
             .await;
             info!("Build table took {duration:.2?}");
+        }
+
+        Command::BuildIndex {
+            data_dir,
+            scylla,
+            vector_store,
+            metric_type,
+            m,
+            ef_construction,
+            ef_search,
+        } => {
+            let count = data::count(&data_dir).await;
+            let scylla = Scylla::new(scylla).await;
+            let clients = vs::new_http_clients(vector_store);
+            let (duration, _) = measure_duration(async move {
+                scylla
+                    .create_index(metric_type, m, ef_construction, ef_search)
+                    .await;
+                vs::wait_for_indexes_ready(&clients, count).await;
+            })
+            .await;
+            info!("Build Index took {duration:.2?}");
         }
     };
 }

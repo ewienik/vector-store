@@ -72,6 +72,31 @@ async fn train_files(path: &Path) -> impl Stream<Item = PathBuf> {
         })
 }
 
+pub(crate) async fn count(path: &Path) -> usize {
+    let size = train_files(path)
+        .await
+        .then(|path| async move {
+            let builder = ParquetRecordBatchStreamBuilder::new(File::open(path).await.unwrap())
+                .await
+                .unwrap();
+            let mask = ProjectionMask::columns(builder.parquet_schema(), [ID].into_iter());
+            builder.with_projection(mask).build().unwrap()
+        })
+        .flatten()
+        .map(move |batch| batch.unwrap())
+        .map(move |batch| {
+            batch
+                .column_by_name(ID)
+                .unwrap()
+                .as_primitive::<Int64Type>()
+                .len()
+        })
+        .fold(0usize, |acc, len| async move { acc + len })
+        .await;
+    info!("Found size {size} for dataset at {path:?}");
+    size
+}
+
 pub(crate) async fn vector_stream(path: &Path) -> impl Stream<Item = (i64, Vec<f32>)> {
     train_files(path)
         .await
