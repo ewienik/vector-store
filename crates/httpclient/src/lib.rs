@@ -12,6 +12,8 @@ use vector_store::ColumnName;
 use vector_store::Distance;
 use vector_store::IndexInfo;
 use vector_store::IndexMetadata;
+use vector_store::IndexName;
+use vector_store::KeyspaceName;
 use vector_store::Limit;
 use vector_store::Vector;
 use vector_store::httproutes::InfoResponse;
@@ -87,11 +89,11 @@ impl HttpClient {
             .unwrap()
     }
 
-    pub async fn count(&self, index: &IndexMetadata) -> Option<usize> {
+    pub async fn count(&self, keyspace: &KeyspaceName, index: &IndexName) -> Option<usize> {
         self.client
             .get(format!(
                 "{}/indexes/{}/{}/count",
-                self.url_api, index.keyspace_name, index.index_name
+                self.url_api, keyspace, index
             ))
             .send()
             .await

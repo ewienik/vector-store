@@ -99,7 +99,7 @@ async fn simple_create_search_delete_index() {
     .unwrap();
 
     wait_for(
-        || async { client.count(&index).await == Some(3) },
+        || async { client.count(&index.keyspace_name, &index.index_name).await == Some(3) },
         "Waiting for index to be added to the store",
     )
     .await;
