@@ -78,6 +78,11 @@ enum Command {
         #[clap(long)]
         scylla: SocketAddr,
     },
+
+    DropIndex {
+        #[clap(long)]
+        scylla: SocketAddr,
+    },
 }
 
 #[tokio::main]
@@ -137,6 +142,15 @@ async fn main() {
             })
             .await;
             info!("Drop Table took {duration:.2?}");
+        }
+
+        Command::DropIndex { scylla } => {
+            let scylla = Scylla::new(scylla).await;
+            let (duration, _) = measure_duration(async move {
+                scylla.drop_index().await;
+            })
+            .await;
+            info!("Drop Index took {duration:.2?}");
         }
     };
 }
