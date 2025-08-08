@@ -119,6 +119,14 @@ impl Scylla {
             .unwrap();
     }
 
+    pub(crate) async fn drop_index(&self) {
+        self.0
+            .session
+            .query_unpaged(format!("DROP INDEX IF EXISTS {KEYSPACE}.{INDEX}"), &[])
+            .await
+            .unwrap();
+    }
+
     pub(crate) async fn upload_vectors(
         &self,
         stream: impl Stream<Item = (i64, Vec<f32>)>,
