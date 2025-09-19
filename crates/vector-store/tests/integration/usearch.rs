@@ -152,7 +152,8 @@ async fn simple_create_search_delete_index() {
 
     let (primary_keys, distances) = client
         .ann(
-            &index,
+            &index.keyspace_name,
+            &index.index_name,
             vec![2.1, -2., 2.].into(),
             NonZeroUsize::new(1).unwrap().into(),
         )
@@ -314,7 +315,8 @@ async fn ann_returns_bad_request_when_provided_vector_size_is_not_eq_index_dimen
 
     let result = client
         .post_ann(
-            &index,
+            &index.keyspace_name,
+            &index.index_name,
             vec![1.0, 2.0].into(), // Only 2 dimensions, should be 3 (index.dimensions)
             NonZeroUsize::new(1).unwrap().into(),
         )
@@ -334,7 +336,8 @@ async fn ann_fail_while_building() {
 
     let result = client
         .post_ann(
-            &index,
+            &index.keyspace_name,
+            &index.index_name,
             vec![1.0, 2.0, 3.0].into(),
             NonZeroUsize::new(1).unwrap().into(),
         )
@@ -359,7 +362,8 @@ async fn ann_works_with_embedding_field_name() {
 
     let response = client
         .post_ann_data(
-            &index,
+            &index.keyspace_name,
+            &index.index_name,
             &EmbeddingRequest {
                 embedding: vec![1.0, 2.0, 3.0].into(),
             },
