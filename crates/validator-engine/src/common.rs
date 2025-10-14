@@ -4,7 +4,6 @@
  */
 
 use crate::tests::*;
-use crate::vector_store_cluster::VectorStoreClusterExt;
 use httpclient::HttpClient;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -17,6 +16,7 @@ use tracing::info;
 use uuid::Uuid;
 use vector_search_validator_tests::DnsExt;
 use vector_search_validator_tests::ScyllaClusterExt;
+use vector_search_validator_tests::VectorStoreClusterExt;
 use vector_store::IndexInfo;
 
 const VS_NAME: &str = "vs";

@@ -28,7 +28,7 @@ use tracing_subscriber::prelude::*;
 use vector_search_validator_tests::DnsExt;
 use vector_search_validator_tests::ScyllaClusterExt;
 use vector_search_validator_tests::ServicesSubnet;
-use vector_store_cluster::VectorStoreClusterExt;
+use vector_search_validator_tests::VectorStoreClusterExt;
 
 #[derive(Debug, Parser)]
 #[clap(version)]
