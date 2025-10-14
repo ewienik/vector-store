@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-use crate::scylla_cluster::ScyllaClusterExt;
 use crate::tests::*;
 use crate::vector_store_cluster::VectorStoreClusterExt;
 use httpclient::HttpClient;
@@ -17,6 +16,7 @@ use tokio::time;
 use tracing::info;
 use uuid::Uuid;
 use vector_search_validator_tests::DnsExt;
+use vector_search_validator_tests::ScyllaClusterExt;
 use vector_store::IndexInfo;
 
 const VS_NAME: &str = "vs";

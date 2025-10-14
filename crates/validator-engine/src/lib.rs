@@ -10,7 +10,6 @@ mod tests;
 mod vector_store_cluster;
 
 use clap::Parser;
-use scylla_cluster::ScyllaClusterExt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
@@ -27,6 +26,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
 use vector_search_validator_tests::DnsExt;
+use vector_search_validator_tests::ScyllaClusterExt;
 use vector_search_validator_tests::ServicesSubnet;
 use vector_store_cluster::VectorStoreClusterExt;
 
