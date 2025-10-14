@@ -27,6 +27,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
+use vector_search_validator_tests::ServicesSubnet;
 use vector_store_cluster::VectorStoreClusterExt;
 
 #[derive(Debug, Parser)]
@@ -76,31 +77,6 @@ async fn executable_exists(path: &Path) -> bool {
         return false;
     };
     metadata.is_file() && (metadata.permissions().mode() & 0o111 != 0)
-}
-
-/// Represents a subnet for services, derived from a base IP address.
-struct ServicesSubnet([u8; 3]);
-
-impl ServicesSubnet {
-    fn new(ip: Ipv4Addr) -> Self {
-        assert!(
-            ip.is_loopback(),
-            "Base IP for services must be a loopback address"
-        );
-
-        let octets = ip.octets();
-        assert!(
-            octets[3] == 1,
-            "Base IP for services must have the last octet set to 1"
-        );
-
-        Self([octets[0], octets[1], octets[2]])
-    }
-
-    /// Returns an IP address in the subnet with the specified last octet.
-    fn ip(&self, octet: u8) -> Ipv4Addr {
-        [self.0[0], self.0[1], self.0[2], octet].into()
-    }
 }
 
 fn validate_different_subnet(dns_ip: Ipv4Addr, base_ip: Ipv4Addr) {

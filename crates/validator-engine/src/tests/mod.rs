@@ -9,7 +9,6 @@ mod full_scan;
 mod reconnect;
 mod serde;
 
-use crate::ServicesSubnet;
 use crate::dns::Dns;
 use crate::scylla_cluster::ScyllaCluster;
 use crate::vector_store_cluster::VectorStoreCluster;
@@ -29,6 +28,7 @@ use tracing::Span;
 use tracing::error;
 use tracing::info;
 use tracing::info_span;
+use vector_search_validator_tests::ServicesSubnet;
 
 #[derive(Clone)]
 pub(crate) struct TestActors {
