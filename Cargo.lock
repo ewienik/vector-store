@@ -3457,8 +3457,10 @@ dependencies = [
 
 [[package]]
 name = "vector-search-validator-scylla"
-version = "0.5.1"
+version = "0.1.0"
+source = "git+https://github.com/ewienik/scylladb?branch=vector-50-add-validator-tests#74f69cfe3dc4fc4e3eab7f26015f60cbec741dae"
 dependencies = [
+ "tracing",
  "vector-search-validator-tests",
 ]
 
