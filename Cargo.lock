@@ -3442,7 +3442,35 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "vector-search-validator-engine",
  "vector-store",
+]
+
+[[package]]
+name = "vector-search-validator-engine"
+version = "0.5.1"
+dependencies = [
+ "vector-search-validator-scylla",
+ "vector-search-validator-tests",
+ "vector-search-validator-vector-store",
+]
+
+[[package]]
+name = "vector-search-validator-scylla"
+version = "0.5.1"
+dependencies = [
+ "vector-search-validator-tests",
+]
+
+[[package]]
+name = "vector-search-validator-tests"
+version = "0.5.1"
+
+[[package]]
+name = "vector-search-validator-vector-store"
+version = "0.5.1"
+dependencies = [
+ "vector-search-validator-tests",
 ]
 
 [[package]]
