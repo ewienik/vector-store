@@ -21,63 +21,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tokio::sync::oneshot;
 use tracing::Instrument;
 use tracing::debug;
 use tracing::debug_span;
-
-pub(crate) enum Dns {
-    Version { tx: oneshot::Sender<String> },
-    Domain { tx: oneshot::Sender<String> },
-    Remove { name: String },
-    Upsert { name: String, ip: Ipv4Addr },
-}
-
-pub(crate) trait DnsExt {
-    /// Returns the version of the DNS server.
-    async fn version(&self) -> String;
-
-    /// Returns the domain name of the DNS server.
-    async fn domain(&self) -> String;
-
-    /// Remove an A DNS record with the given name.
-    async fn remove(&self, name: String);
-
-    /// Upserts an A DNS record with the given name and IP address.
-    async fn upsert(&self, name: String, ip: Ipv4Addr);
-}
-
-impl DnsExt for mpsc::Sender<Dns> {
-    async fn version(&self) -> String {
-        let (tx, rx) = oneshot::channel();
-        self.send(Dns::Version { tx })
-            .await
-            .expect("DnsExt::version: internal actor should receive request");
-        rx.await
-            .expect("DnsExt::version: internal actor should send response")
-    }
-
-    async fn domain(&self) -> String {
-        let (tx, rx) = oneshot::channel();
-        self.send(Dns::Domain { tx })
-            .await
-            .expect("DnsExt::domain: internal actor should receive request");
-        rx.await
-            .expect("DnsExt::domain: internal actor should send response")
-    }
-
-    async fn remove(&self, name: String) {
-        self.send(Dns::Remove { name })
-            .await
-            .expect("DnsExt::remove: internal actor should receive request");
-    }
-
-    async fn upsert(&self, name: String, ip: Ipv4Addr) {
-        self.send(Dns::Upsert { name, ip })
-            .await
-            .expect("DnsExt::upsert: internal actor should receive request");
-    }
-}
+use vector_search_validator_tests::Dns;
 
 /// Starts the DNS server on the given IP address.
 pub(crate) async fn new(ip: Ipv4Addr) -> mpsc::Sender<Dns> {
