@@ -3430,7 +3430,14 @@ dependencies = [
 
 [[package]]
 name = "vector-search-validator"
-version = "0.1.0"
+version = "0.5.1"
+dependencies = [
+ "vector-search-validator-engine",
+]
+
+[[package]]
+name = "vector-search-validator-engine"
+version = "0.5.1"
 dependencies = [
  "clap",
  "futures",
@@ -3442,17 +3449,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "vector-search-validator-engine",
- "vector-store",
-]
-
-[[package]]
-name = "vector-search-validator-engine"
-version = "0.5.1"
-dependencies = [
  "vector-search-validator-scylla",
  "vector-search-validator-tests",
  "vector-search-validator-vector-store",
+ "vector-store",
 ]
 
 [[package]]
