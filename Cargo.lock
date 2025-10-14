@@ -3466,8 +3466,12 @@ dependencies = [
 name = "vector-search-validator-tests"
 version = "0.5.1"
 dependencies = [
+ "httpclient",
+ "scylla",
  "tokio",
  "tracing",
+ "uuid",
+ "vector-store",
 ]
 
 [[package]]
