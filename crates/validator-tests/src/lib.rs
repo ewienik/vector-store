@@ -3,6 +3,10 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
+mod dns;
+
+pub use dns::Dns;
+pub use dns::DnsExt;
 use std::net::Ipv4Addr;
 
 /// Represents a subnet for services, derived from a base IP address.
