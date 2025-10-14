@@ -17,4 +17,5 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+vector-search-validator-engine.workspace = true
 vector-store.workspace = true
