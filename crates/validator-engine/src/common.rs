@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-use crate::tests::*;
 use httpclient::HttpClient;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -16,6 +15,7 @@ use tracing::info;
 use uuid::Uuid;
 use vector_search_validator_tests::DnsExt;
 use vector_search_validator_tests::ScyllaClusterExt;
+use vector_search_validator_tests::TestActors;
 use vector_search_validator_tests::VectorStoreClusterExt;
 use vector_store::IndexInfo;
 

@@ -17,7 +17,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tests::TestActors;
 use tests::TestCase;
 use tokio::fs;
 use tokio::runtime::Builder;
@@ -28,6 +27,7 @@ use tracing_subscriber::prelude::*;
 use vector_search_validator_tests::DnsExt;
 use vector_search_validator_tests::ScyllaClusterExt;
 use vector_search_validator_tests::ServicesSubnet;
+use vector_search_validator_tests::TestActors;
 use vector_search_validator_tests::VectorStoreClusterExt;
 
 #[derive(Debug, Parser)]

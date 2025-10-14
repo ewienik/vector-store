@@ -12,6 +12,8 @@ pub use dns::DnsExt;
 pub use scylla_cluster::ScyllaCluster;
 pub use scylla_cluster::ScyllaClusterExt;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
+use tokio::sync::mpsc;
 pub use vector_store_cluster::VectorStoreCluster;
 pub use vector_store_cluster::VectorStoreClusterExt;
 
@@ -38,4 +40,12 @@ impl ServicesSubnet {
     pub fn ip(&self, octet: u8) -> Ipv4Addr {
         [self.0[0], self.0[1], self.0[2], octet].into()
     }
+}
+
+#[derive(Clone)]
+pub struct TestActors {
+    pub services_subnet: Arc<ServicesSubnet>,
+    pub dns: mpsc::Sender<Dns>,
+    pub db: mpsc::Sender<ScyllaCluster>,
+    pub vs: mpsc::Sender<VectorStoreCluster>,
 }
