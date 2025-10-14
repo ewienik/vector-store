@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-use crate::common::*;
 use crate::tests::*;
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::info;
+use vector_search_validator_tests::common::*;
 
 pub(crate) async fn new() -> TestCase {
     let timeout = Duration::from_secs(30);

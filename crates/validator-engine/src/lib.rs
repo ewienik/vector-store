@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-mod common;
 mod dns;
 mod scylla_cluster;
 mod tests;
