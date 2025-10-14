@@ -18,25 +18,13 @@ use std::collections::HashSet;
 use std::future;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
 use tokio::time;
 use tracing::Instrument;
 use tracing::Span;
 use tracing::error;
 use tracing::info;
 use tracing::info_span;
-use vector_search_validator_tests::Dns;
-use vector_search_validator_tests::ScyllaCluster;
-use vector_search_validator_tests::ServicesSubnet;
-use vector_search_validator_tests::VectorStoreCluster;
-
-#[derive(Clone)]
-pub(crate) struct TestActors {
-    pub(crate) services_subnet: Arc<ServicesSubnet>,
-    pub(crate) dns: mpsc::Sender<Dns>,
-    pub(crate) db: mpsc::Sender<ScyllaCluster>,
-    pub(crate) vs: mpsc::Sender<VectorStoreCluster>,
-}
+use vector_search_validator_tests::TestActors;
 
 type TestFuture = BoxFuture<'static, ()>;
 
