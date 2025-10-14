@@ -9,7 +9,6 @@ mod full_scan;
 mod reconnect;
 mod serde;
 
-use crate::vector_store_cluster::VectorStoreCluster;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use futures::stream;
@@ -29,6 +28,7 @@ use tracing::info_span;
 use vector_search_validator_tests::Dns;
 use vector_search_validator_tests::ScyllaCluster;
 use vector_search_validator_tests::ServicesSubnet;
+use vector_search_validator_tests::VectorStoreCluster;
 
 #[derive(Clone)]
 pub(crate) struct TestActors {

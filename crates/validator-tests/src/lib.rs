@@ -5,12 +5,15 @@
 
 mod dns;
 mod scylla_cluster;
+mod vector_store_cluster;
 
 pub use dns::Dns;
 pub use dns::DnsExt;
 pub use scylla_cluster::ScyllaCluster;
 pub use scylla_cluster::ScyllaClusterExt;
 use std::net::Ipv4Addr;
+pub use vector_store_cluster::VectorStoreCluster;
+pub use vector_store_cluster::VectorStoreClusterExt;
 
 /// Represents a subnet for services, derived from a base IP address.
 pub struct ServicesSubnet([u8; 3]);
