@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-use crate::tests::*;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
 use vector_search_validator_tests::ScyllaClusterExt;
 use vector_search_validator_tests::common::*;
+use vector_search_validator_tests::*;
 
 pub(crate) async fn new() -> TestCase {
     let timeout = Duration::from_secs(30);

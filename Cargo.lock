@@ -3466,6 +3466,7 @@ dependencies = [
 name = "vector-search-validator-tests"
 version = "0.5.1"
 dependencies = [
+ "futures",
  "httpclient",
  "scylla",
  "tokio",

@@ -16,7 +16,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tests::TestCase;
 use tokio::fs;
 use tokio::runtime::Builder;
 use tracing::info;
@@ -27,6 +26,7 @@ use vector_search_validator_tests::DnsExt;
 use vector_search_validator_tests::ScyllaClusterExt;
 use vector_search_validator_tests::ServicesSubnet;
 use vector_search_validator_tests::TestActors;
+use vector_search_validator_tests::TestCase;
 use vector_search_validator_tests::VectorStoreClusterExt;
 
 #[derive(Debug, Parser)]
@@ -197,7 +197,7 @@ pub fn run() {
             let filter_map = parse_test_filters(&args.filters, &test_cases);
 
             assert!(
-                tests::run(
+                vector_search_validator_tests::run(
                     TestActors {
                         services_subnet,
                         dns,
@@ -216,19 +216,31 @@ pub fn run() {
 pub(crate) mod validator_tests {
     use super::*;
 
+    fn make_dummy_test_cases(test_names: &[&str]) -> TestCase {
+        let mut tc = TestCase::empty();
+        for &name in test_names {
+            tc = tc.with_test(
+                name.to_string(),
+                std::time::Duration::ZERO,
+                |_actors| async {},
+            );
+        }
+        tc
+    }
+
     fn make_test_cases() -> Vec<(String, TestCase)> {
         vec![
             (
                 "crud".to_string(),
-                TestCase::make_dummy_test_cases(&["simple_create", "drop_index"]),
+                make_dummy_test_cases(&["simple_create", "drop_index"]),
             ),
             (
                 "full_scan".to_string(),
-                TestCase::make_dummy_test_cases(&["scan_index", "scan_all"]),
+                make_dummy_test_cases(&["scan_index", "scan_all"]),
             ),
             (
                 "other".to_string(),
-                TestCase::make_dummy_test_cases(&["misc", "simple_misc"]),
+                make_dummy_test_cases(&["misc", "simple_misc"]),
             ),
         ]
     }
