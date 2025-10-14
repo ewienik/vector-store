@@ -5,7 +5,6 @@
 
 mod dns;
 mod scylla_cluster;
-mod tests;
 mod vector_store_cluster;
 
 use clap::Parser;
@@ -160,6 +159,14 @@ fn parse_test_filters(
     filter_map
 }
 
+/// Returns a vector of all known test cases to be run. Each test case is registered with a name
+async fn register() -> Vec<(String, TestCase)> {
+    vector_search_validator_vector_store::test_cases()
+        .await
+        .chain(vector_search_validator_scylla::test_cases().await)
+        .collect()
+}
+
 pub fn run() {
     tracing_subscriber::registry()
         .with(
@@ -193,7 +200,7 @@ pub fn run() {
             info!("scylla version: {}", db.version().await);
             info!("vector-store version: {}", vs.version().await);
 
-            let test_cases = tests::register().await;
+            let test_cases = register().await;
             let filter_map = parse_test_filters(&args.filters, &test_cases);
 
             assert!(

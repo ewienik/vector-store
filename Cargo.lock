@@ -3479,6 +3479,9 @@ dependencies = [
 name = "vector-search-validator-vector-store"
 version = "0.5.1"
 dependencies = [
+ "scylla",
+ "tokio",
+ "tracing",
  "vector-search-validator-tests",
 ]
 
