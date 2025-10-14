@@ -4,11 +4,11 @@
  */
 
 use crate::common::*;
-use crate::scylla_cluster::ScyllaClusterExt;
 use crate::tests::*;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
+use vector_search_validator_tests::ScyllaClusterExt;
 
 pub(crate) async fn new() -> TestCase {
     let timeout = Duration::from_secs(30);

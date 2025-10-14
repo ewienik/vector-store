@@ -4,9 +4,12 @@
  */
 
 mod dns;
+mod scylla_cluster;
 
 pub use dns::Dns;
 pub use dns::DnsExt;
+pub use scylla_cluster::ScyllaCluster;
+pub use scylla_cluster::ScyllaClusterExt;
 use std::net::Ipv4Addr;
 
 /// Represents a subnet for services, derived from a base IP address.
