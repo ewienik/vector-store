@@ -27,8 +27,8 @@ use tokio::time;
 use tracing::Instrument;
 use tracing::Span;
 use tracing::error;
+use tracing::error_span;
 use tracing::info;
-use tracing::info_span;
 pub use vector_store_cluster::VectorStoreCluster;
 pub use vector_store_cluster::VectorStoreClusterExt;
 
@@ -157,7 +157,7 @@ impl TestCase {
 
         if let Some((timeout, init)) = &self.init {
             stats.launched += 1;
-            if !run_single(info_span!("init"), *timeout, init(actors.clone())).await {
+            if !run_single(error_span!("init"), *timeout, init(actors.clone())).await {
                 stats.failed += 1;
                 return stats;
             }
@@ -171,7 +171,7 @@ impl TestCase {
             .then(|(name, timeout, test)| {
                 let actors = actors.clone();
                 stats.launched += 1;
-                async move { run_single(info_span!("test", name), *timeout, test(actors)).await }
+                async move { run_single(error_span!("test", name), *timeout, test(actors)).await }
             })
             .for_each(|ok| {
                 if ok {
@@ -185,7 +185,7 @@ impl TestCase {
 
         if let Some((timeout, cleanup)) = &self.cleanup {
             stats.launched += 1;
-            if !run_single(info_span!("cleanup"), *timeout, cleanup(actors.clone())).await {
+            if !run_single(error_span!("cleanup"), *timeout, cleanup(actors.clone())).await {
                 stats.failed += 1;
             } else {
                 stats.ok += 1;
@@ -219,12 +219,13 @@ async fn run_single(span: Span, timeout: Duration, future: TestFuture) -> bool {
         }
         .instrument(span.clone())
     });
-    if task.await.is_ok() {
+    if let Err(err) = task.await {
+        error!(parent: &span, "test failed: {err}");
+        false
+    } else {
         info!(parent: &span, "test ok");
-        return true;
+        true
     }
-    error!(parent: &span, "test failed");
-    false
 }
 
 /// Runs all test cases, filtering them based on the provided filter map.
@@ -245,7 +246,7 @@ pub async fn run(
             async move {
                 let stats = test_case
                     .run(actors, filter.get(&file_name).unwrap_or(&HashSet::new()))
-                    .instrument(info_span!("test-case", name))
+                    .instrument(error_span!("test-case", name))
                     .await;
                 if stats.failed > 0 {
                     error!("test case failed: {stats:?}");

@@ -12,13 +12,18 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
 use std::os::unix::fs::PermissionsExt;
+use std::panic;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process;
 use std::sync::Arc;
 use tokio::fs;
 use tokio::runtime::Builder;
+use tracing::error;
 use tracing::info;
+use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
 use vector_search_validator_tests::DnsExt;
@@ -46,6 +51,10 @@ struct Args {
     /// Enable verbose logging for Scylla and vector-store.
     #[arg(short, long, default_value = "false")]
     verbose: bool,
+
+    /// Enable repeating errors information into stderr stream.
+    #[arg(long, default_value = "false")]
+    repeat_errors: bool,
 
     /// Path to the ScyllaDB executable.
     #[arg(value_name = "PATH")]
@@ -168,22 +177,38 @@ async fn register() -> Vec<(String, TestCase)> {
 }
 
 pub fn run() {
+    let args = Args::parse();
+
     tracing_subscriber::registry()
+        .with(
+            args.repeat_errors.then_some(
+                fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .with_target(false)
+                    .with_filter(LevelFilter::ERROR)
+                    .with_filter(filter::filter_fn(|metadata| {
+                        metadata.target() == "vector_search_validator_tests"
+                            || metadata.target() == "vector_search_validator_engine"
+                    })),
+            ),
+        )
         .with(
             EnvFilter::try_from_default_env()
                 .or_else(|_| EnvFilter::try_new("info"))
                 .expect("Failed to create EnvFilter"),
         )
-        .with(fmt::layer().with_target(false))
+        .with(fmt::layer().with_target(false).with_writer(std::io::stdout))
         .init();
+
+    panic::set_hook(Box::new(|info| {
+        error!("{info}");
+    }));
 
     Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()
         .block_on(async move {
-            let args = Args::parse();
-
             validate_different_subnet(args.dns_ip, args.base_ip);
 
             let services_subnet = Arc::new(ServicesSubnet::new(args.base_ip));
@@ -196,26 +221,28 @@ pub fn run() {
                 env!("CARGO_PKG_NAME"),
                 env!("CARGO_PKG_VERSION")
             );
+            let version = db.version().await;
+            info!("scylla version: {}", version);
             info!("dns version: {}", dns.version().await);
-            info!("scylla version: {}", db.version().await);
             info!("vector-store version: {}", vs.version().await);
 
             let test_cases = register().await;
             let filter_map = parse_test_filters(&args.filters, &test_cases);
 
-            assert!(
-                vector_search_validator_tests::run(
-                    TestActors {
-                        services_subnet,
-                        dns,
-                        db,
-                        vs,
-                    },
-                    test_cases,
-                    Arc::new(filter_map)
-                )
-                .await
-            );
+            if !vector_search_validator_tests::run(
+                TestActors {
+                    services_subnet,
+                    dns,
+                    db,
+                    vs,
+                },
+                test_cases,
+                Arc::new(filter_map),
+            )
+            .await
+            {
+                process::exit(1);
+            }
         });
 }
 

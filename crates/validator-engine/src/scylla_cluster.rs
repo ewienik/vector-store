@@ -162,6 +162,10 @@ async fn run_cluster(
             .arg("true")
             .arg("--smp")
             .arg("2")
+            .arg("--log-to-stdout")
+            .arg("true")
+            .arg("--logger-ostream-type")
+            .arg("stdout")
             .spawn()
             .expect("start: failed to spawn scylladb"),
     );
