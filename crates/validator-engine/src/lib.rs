@@ -15,7 +15,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::panic;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process;
 use std::sync::Arc;
 use tokio::fs;
 use tokio::runtime::Builder;
@@ -47,6 +46,10 @@ struct Args {
     /// Path to the ScyllaDB configuration file.
     #[arg(short, long, default_value = "conf/scylla.yaml", value_name = "PATH")]
     scylla_default_conf: PathBuf,
+
+    /// Path to the base tmp directory.
+    #[arg(short, long, default_value = "/tmp", value_name = "PATH")]
+    tmpdir: PathBuf,
 
     /// Enable verbose logging for Scylla and vector-store.
     #[arg(short, long, default_value = "false")]
@@ -176,7 +179,7 @@ async fn register() -> Vec<(String, TestCase)> {
         .collect()
 }
 
-pub fn run() {
+pub fn run() -> Result<(), &'static str> {
     let args = Args::parse();
 
     tracing_subscriber::registry()
@@ -213,7 +216,13 @@ pub fn run() {
 
             let services_subnet = Arc::new(ServicesSubnet::new(args.base_ip));
             let dns = dns::new(args.dns_ip).await;
-            let db = scylla_cluster::new(args.scylla, args.scylla_default_conf, args.verbose).await;
+            let db = scylla_cluster::new(
+                args.scylla,
+                args.scylla_default_conf,
+                args.tmpdir,
+                args.verbose,
+            )
+            .await;
             let vs = vector_store_cluster::new(args.vector_store, args.verbose).await;
 
             info!(
@@ -229,7 +238,7 @@ pub fn run() {
             let test_cases = register().await;
             let filter_map = parse_test_filters(&args.filters, &test_cases);
 
-            if !vector_search_validator_tests::run(
+            vector_search_validator_tests::run(
                 TestActors {
                     services_subnet,
                     dns,
@@ -240,10 +249,9 @@ pub fn run() {
                 Arc::new(filter_map),
             )
             .await
-            {
-                process::exit(1);
-            }
-        });
+            .then_some(())
+            .ok_or("Some vector-search-validator tests failed")
+        })
 }
 
 #[cfg(test)]

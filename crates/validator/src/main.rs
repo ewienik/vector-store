@@ -3,6 +3,6 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-fn main() {
-    vector_search_validator_engine::run();
+fn main() -> Result<(), &'static str> {
+    vector_search_validator_engine::run()
 }

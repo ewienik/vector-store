@@ -22,6 +22,7 @@ use vector_search_validator_tests::ScyllaCluster;
 pub(crate) async fn new(
     path: PathBuf,
     default_conf: PathBuf,
+    tempdir: PathBuf,
     verbose: bool,
 ) -> mpsc::Sender<ScyllaCluster> {
     let (tx, mut rx) = mpsc::channel(10);
@@ -35,7 +36,7 @@ pub(crate) async fn new(
         "scylla config '{path:?}' does not exist"
     );
 
-    let mut state = State::new(path, default_conf, verbose).await;
+    let mut state = State::new(path, default_conf, tempdir, verbose).await;
 
     tokio::spawn(
         async move {
@@ -56,6 +57,7 @@ pub(crate) async fn new(
 struct State {
     path: PathBuf,
     default_conf: PathBuf,
+    tempdir: PathBuf,
     db_ip: Option<Ipv4Addr>,
     child: Option<Child>,
     workdir: Option<TempDir>,
@@ -64,7 +66,7 @@ struct State {
 }
 
 impl State {
-    async fn new(path: PathBuf, default_conf: PathBuf, verbose: bool) -> Self {
+    async fn new(path: PathBuf, default_conf: PathBuf, tempdir: PathBuf, verbose: bool) -> Self {
         let version = String::from_utf8_lossy(
             &Command::new(&path)
                 .arg("--version")
@@ -80,6 +82,7 @@ impl State {
             path,
             default_conf,
             version,
+            tempdir,
             db_ip: None,
             child: None,
             workdir: None,
@@ -172,7 +175,8 @@ async fn run_cluster(
 }
 
 async fn start(vs_uri: String, db_ip: Ipv4Addr, conf: Option<Vec<u8>>, state: &mut State) {
-    let workdir = TempDir::new().expect("start: failed to create temporary directory for scylladb");
+    let workdir = TempDir::new_in(&state.tempdir)
+        .expect("start: failed to create temporary directory for scylladb");
     run_cluster(&vs_uri, &db_ip, &conf, workdir.path(), state).await;
     state.workdir = Some(workdir);
     state.db_ip = Some(db_ip);
