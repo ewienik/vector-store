@@ -11,6 +11,7 @@ use crate::IndexName;
 use crate::KeyspaceName;
 use crate::Limit;
 use crate::Progress;
+use crate::Restriction;
 use crate::Vector;
 use crate::db_index::DbIndexExt;
 use crate::engine::Engine;
@@ -42,6 +43,8 @@ use macros::ToEnumSchema;
 use prometheus::Encoder;
 use prometheus::ProtobufEncoder;
 use prometheus::TextEncoder;
+use scylla::cluster::metadata::NativeType;
+use scylla::value::CqlTimeuuid;
 use scylla::value::CqlValue;
 use serde_json::Number;
 use serde_json::Value;
@@ -353,9 +356,164 @@ async fn get_metrics(
 }
 
 #[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
+#[serde(tag = "type")]
+pub enum PostIndexAnnRestriction {
+    #[serde(rename = "==")]
+    Eq { lhs: ColumnName, rhs: Value },
+    #[serde(rename = "IN")]
+    In { lhs: ColumnName, rhs: Vec<Value> },
+    #[serde(rename = "<")]
+    Lt { lhs: ColumnName, rhs: Value },
+    #[serde(rename = "<=")]
+    Lte { lhs: ColumnName, rhs: Value },
+    #[serde(rename = ">")]
+    Gt { lhs: ColumnName, rhs: Value },
+    #[serde(rename = ">=")]
+    Gte { lhs: ColumnName, rhs: Value },
+    #[serde(rename = "()<()")]
+    LtTuple {
+        lhs: Vec<ColumnName>,
+        rhs: Vec<Value>,
+    },
+    #[serde(rename = "()<=()")]
+    LteTuple {
+        lhs: Vec<ColumnName>,
+        rhs: Vec<Value>,
+    },
+    #[serde(rename = "()>()")]
+    GtTuple {
+        lhs: Vec<ColumnName>,
+        rhs: Vec<Value>,
+    },
+    #[serde(rename = "()>=()")]
+    GteTuple {
+        lhs: Vec<ColumnName>,
+        rhs: Vec<Value>,
+    },
+}
+
+#[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
+pub struct PostIndexAnnFilter {
+    pub restrictions: Vec<PostIndexAnnRestriction>,
+    #[serde(default)]
+    pub allow_filtering: bool,
+}
+
+fn try_from_post_index_ann_filter(
+    json_filter: PostIndexAnnFilter,
+    primary_key_columns: &[ColumnName],
+    table_columns: &HashMap<ColumnName, NativeType>,
+) -> anyhow::Result<Filter> {
+    let is_same_len = |columns: &[ColumnName], values: &[Value]| -> anyhow::Result<()> {
+        if columns.len() != values.len() {
+            bail!(
+                "Length of column tuple {columns:?} ({columns_len}) does not match length of values tuple ({values_len})",
+                columns_len = columns.len(),
+                values_len = values.len()
+            );
+        }
+        Ok(())
+    };
+    let from_json = |column: &ColumnName, value: Value| -> anyhow::Result<CqlValue> {
+        if !primary_key_columns.contains(column) {
+            bail!("Filtering on non primary key columns is not supported");
+        };
+        let Some(native_type) = table_columns.get(column) else {
+            bail!(
+                "Column '{column}' in filter restriction is not part of the table or is not a supported native type",
+            )
+        };
+        try_from_json(value, native_type)
+    };
+    Ok(Filter {
+        restrictions: json_filter
+            .restrictions
+            .into_iter()
+            .map(|restriction| -> anyhow::Result<Restriction> {
+                Ok(match restriction {
+                    PostIndexAnnRestriction::Eq { lhs, rhs } => Restriction::Eq {
+                        rhs: from_json(&lhs, rhs)?,
+                        lhs,
+                    },
+                    PostIndexAnnRestriction::In { lhs, rhs } => Restriction::In {
+                        rhs: rhs
+                            .into_iter()
+                            .map(|rhs| from_json(&lhs, rhs))
+                            .collect::<anyhow::Result<_>>()?,
+                        lhs,
+                    },
+                    PostIndexAnnRestriction::Lt { lhs, rhs } => Restriction::Lt {
+                        rhs: from_json(&lhs, rhs)?,
+                        lhs,
+                    },
+                    PostIndexAnnRestriction::Lte { lhs, rhs } => Restriction::Lte {
+                        rhs: from_json(&lhs, rhs)?,
+                        lhs,
+                    },
+                    PostIndexAnnRestriction::Gt { lhs, rhs } => Restriction::Gt {
+                        rhs: from_json(&lhs, rhs)?,
+                        lhs,
+                    },
+                    PostIndexAnnRestriction::Gte { lhs, rhs } => Restriction::Gte {
+                        rhs: from_json(&lhs, rhs)?,
+                        lhs,
+                    },
+                    PostIndexAnnRestriction::LtTuple { lhs, rhs } => {
+                        is_same_len(&lhs, &rhs)?;
+                        Restriction::LtTuple {
+                            rhs: rhs
+                                .into_iter()
+                                .enumerate()
+                                .map(|(idx, rhs)| from_json(&lhs[idx], rhs))
+                                .collect::<anyhow::Result<_>>()?,
+                            lhs,
+                        }
+                    }
+                    PostIndexAnnRestriction::LteTuple { lhs, rhs } => {
+                        is_same_len(&lhs, &rhs)?;
+                        Restriction::LteTuple {
+                            rhs: rhs
+                                .into_iter()
+                                .enumerate()
+                                .map(|(idx, rhs)| from_json(&lhs[idx], rhs))
+                                .collect::<anyhow::Result<_>>()?,
+                            lhs,
+                        }
+                    }
+                    PostIndexAnnRestriction::GtTuple { lhs, rhs } => {
+                        is_same_len(&lhs, &rhs)?;
+                        Restriction::GtTuple {
+                            rhs: rhs
+                                .into_iter()
+                                .enumerate()
+                                .map(|(idx, rhs)| from_json(&lhs[idx], rhs))
+                                .collect::<anyhow::Result<_>>()?,
+                            lhs,
+                        }
+                    }
+                    PostIndexAnnRestriction::GteTuple { lhs, rhs } => {
+                        is_same_len(&lhs, &rhs)?;
+                        Restriction::GteTuple {
+                            rhs: rhs
+                                .into_iter()
+                                .enumerate()
+                                .map(|(idx, rhs)| from_json(&lhs[idx], rhs))
+                                .collect::<anyhow::Result<_>>()?,
+                            lhs,
+                        }
+                    }
+                })
+            })
+            .collect::<anyhow::Result<_>>()?,
+        allow_filtering: json_filter.allow_filtering,
+    })
+}
+
+#[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
 pub struct PostIndexAnnRequest {
     #[serde(alias = "embedding")]
     pub vector: Vector,
+    pub filter: Option<PostIndexAnnFilter>,
     #[serde(default)]
     pub limit: Limit,
 }
@@ -465,16 +623,20 @@ async fn post_index_ann(
     }
 
     let primary_key_columns = db_index.get_primary_key_columns().await;
-    let search_result = if false {
+    let search_result = if let Some(filter) = request.filter {
+        let filter = match try_from_post_index_ann_filter(
+            filter,
+            &primary_key_columns,
+            db_index.get_table_columns().await.as_ref(),
+        ) {
+            Ok(filter) => filter,
+            Err(err) => {
+                debug!("post_index_ann: {err}");
+                return (StatusCode::BAD_REQUEST, err.to_string()).into_response();
+            }
+        };
         index
-            .filtered_ann(
-                request.vector,
-                Filter {
-                    restrictions: vec![],
-                    allow_filtering: false,
-                },
-                request.limit,
-            )
+            .filtered_ann(request.vector, filter, request.limit)
             .await
     } else {
         index.ann(request.vector, request.limit).await
@@ -594,6 +756,96 @@ fn try_to_json(value: CqlValue) -> anyhow::Result<Value> {
         )),
 
         _ => unimplemented!(),
+    }
+}
+
+fn try_from_json(value: Value, cql_type: &NativeType) -> anyhow::Result<CqlValue> {
+    match value {
+        Value::String(value) => match cql_type {
+            NativeType::Ascii => Ok(CqlValue::Ascii(value)),
+            NativeType::Text => Ok(CqlValue::Text(value)),
+            NativeType::Uuid => {
+                let uuid = value
+                    .parse()
+                    .map_err(|err| anyhow!("Failed to parse UUID from string '{value}': {err}"))?;
+                Ok(CqlValue::Uuid(uuid))
+            }
+            NativeType::Timeuuid => {
+                let timeuuid: CqlTimeuuid = value.parse().map_err(|err| {
+                    anyhow!("Failed to parse TimeUUID from string '{value}': {err}")
+                })?;
+                Ok(CqlValue::Timeuuid(timeuuid))
+            }
+            NativeType::Date => {
+                let date = Date::parse(&value, &Iso8601::DATE)
+                    .map_err(|err| anyhow!("Failed to parse Date from string '{value}': {err}"))?;
+                Ok(CqlValue::Date(date.into()))
+            }
+            NativeType::Time => {
+                let time = Time::parse(&format!("T{value}"), &Iso8601::TIME)
+                    .map_err(|err| anyhow!("Failed to parse Time from string '{value}': {err}"))?;
+                Ok(CqlValue::Time(time.into()))
+            }
+            NativeType::Timestamp => {
+                let datetime = OffsetDateTime::parse(&value, {
+                    const CONFIG: u128 = Config::DEFAULT
+                        .set_time_precision(TimePrecision::Second {
+                            decimal_digits: NonZero::new(3),
+                        })
+                        .encode();
+                    &Iso8601::<CONFIG>
+                })
+                .map_err(|err| anyhow!("Failed to parse Timestamp from string '{value}': {err}"))?;
+                Ok(CqlValue::Timestamp(datetime.into()))
+            }
+            _ => bail!("Cannot convert string to CqlValue::{cql_type:?}, unsupported type"),
+        },
+
+        Value::Bool(value) => match cql_type {
+            NativeType::Boolean => Ok(CqlValue::Boolean(value)),
+            _ => bail!("Cannot convert bool to CqlValue::{cql_type:?}, unsupported type"),
+        },
+        Value::Number(value) => match cql_type {
+            NativeType::Double => {
+                Ok(CqlValue::Double(value.as_f64().ok_or_else(|| {
+                    anyhow!("Expected f64 for CqlValue::Double")
+                })?))
+            }
+            NativeType::Float => Ok(CqlValue::Float(
+                value
+                    .as_f64()
+                    .ok_or_else(|| anyhow!("Expected f32 for CqlValue::Float"))?
+                    as f32,
+            )),
+            NativeType::Int => Ok(CqlValue::Int(
+                value
+                    .as_i64()
+                    .ok_or_else(|| anyhow!("Expected i32 for CqlValue::Int"))?
+                    as i32,
+            )),
+            NativeType::BigInt => {
+                Ok(CqlValue::BigInt(value.as_i64().ok_or_else(|| {
+                    anyhow!("Expected i64 for CqlValue::BigInt")
+                })?))
+            }
+            NativeType::SmallInt => Ok(CqlValue::SmallInt(
+                value
+                    .as_i64()
+                    .ok_or_else(|| anyhow!("Expected i16 for CqlValue::SmallInt"))?
+                    as i16,
+            )),
+            NativeType::TinyInt => Ok(CqlValue::TinyInt(
+                value
+                    .as_i64()
+                    .ok_or_else(|| anyhow!("Expected i8 for CqlValue::TinyInt"))?
+                    as i8,
+            )),
+            _ => bail!("Cannot convert number to CqlValue::{cql_type:?}, unsupported type"),
+        },
+
+        _ => {
+            bail!("Cannot convert JSON value '{value}' to CqlValue::{cql_type:?}, unsupported type")
+        }
     }
 }
 

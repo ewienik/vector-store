@@ -197,6 +197,7 @@ async fn simple_create_search_delete_index() {
             &index.keyspace_name,
             &index.index_name,
             vec![2.1, -2., 2.].into(),
+            None,
             NonZeroUsize::new(1).unwrap().into(),
         )
         .await;
@@ -379,6 +380,7 @@ async fn ann_returns_bad_request_when_provided_vector_size_is_not_eq_index_dimen
             &index.keyspace_name,
             &index.index_name,
             vec![1.0, 2.0].into(), // Only 2 dimensions, should be 3 (index.dimensions)
+            None,
             NonZeroUsize::new(1).unwrap().into(),
         )
         .await;
@@ -409,6 +411,7 @@ async fn ann_fail_while_building() {
             &index.keyspace_name,
             &index.index_name,
             vec![1.0, 2.0, 3.0].into(),
+            None,
             NonZeroUsize::new(1).unwrap().into(),
         )
         .await;
@@ -470,6 +473,7 @@ async fn ann_failed_when_wrong_number_of_primary_keys() {
             &index.keyspace_name,
             &index.index_name,
             vec![1.0, 2.0, 3.0].into(),
+            None,
             NonZeroUsize::new(1).unwrap().into(),
         )
         .await;
