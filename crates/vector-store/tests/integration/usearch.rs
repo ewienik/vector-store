@@ -14,6 +14,7 @@ use httpclient::HttpClient;
 use reqwest::StatusCode;
 use scylla::cluster::metadata::NativeType;
 use scylla::value::CqlValue;
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -31,6 +32,8 @@ use vector_store::PrimaryKey;
 use vector_store::SpaceType;
 use vector_store::Timestamp;
 use vector_store::Vector;
+use vector_store::httproutes::PostIndexAnnFilter;
+use vector_store::httproutes::PostIndexAnnRestriction;
 use vector_store::node_state::NodeState;
 
 pub(crate) async fn setup_store(
@@ -57,7 +60,7 @@ pub(crate) async fn setup_store(
         connectivity: Connectivity::default(),
         expansion_add: ExpansionAdd::default(),
         expansion_search: ExpansionSearch::default(),
-        space_type: SpaceType::default(),
+        space_type: SpaceType::Euclidean,
         version: Uuid::new_v4().into(),
     };
 
@@ -479,6 +482,106 @@ async fn ann_failed_when_wrong_number_of_primary_keys() {
         .await;
 
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+#[ntest::timeout(10_000)]
+async fn ann_filter_primary_key_int_eq() {
+    crate::enable_tracing();
+
+    let pk_column: ColumnName = "pk".into();
+    let ck_column: ColumnName = "ck".into();
+    let (index, client, _db, _server, _node_state) = setup_store_and_wait_for_index(
+        [pk_column.clone(), ck_column.clone()],
+        [
+            (pk_column.clone(), NativeType::Int),
+            (ck_column.clone(), NativeType::Int),
+        ],
+        (0..30).map(|i| {
+            (
+                vec![CqlValue::Int(i / 10), CqlValue::Int(i % 10)].into(),
+                Some(vec![i as f32, i as f32, i as f32].into()),
+                OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+            )
+        }),
+    )
+    .await;
+
+    // Search for nearest neighbors with a filter on primary key "pk" = 1
+    let (primary_keys, _) = client
+        .ann(
+            &index.keyspace_name,
+            &index.index_name,
+            vec![1.0, 2.0, 3.0].into(),
+            Some(PostIndexAnnFilter {
+                restrictions: vec![PostIndexAnnRestriction::Eq {
+                    lhs: pk_column.clone(),
+                    rhs: 1.into(),
+                }],
+                allow_filtering: false,
+            }),
+            NonZeroUsize::new(20).unwrap().into(),
+        )
+        .await;
+    let pk_values: Vec<_> = primary_keys
+        .get(&pk_column)
+        .unwrap()
+        .iter()
+        .map(|v| v.as_i64().unwrap() as usize)
+        .collect();
+    let ck_values: HashSet<_> = primary_keys
+        .get(&ck_column)
+        .unwrap()
+        .iter()
+        .map(|v| v.as_i64().unwrap() as usize)
+        .collect();
+    assert_eq!(pk_values.len(), 10);
+    assert_eq!(ck_values.len(), 10);
+    (0..10).for_each(|i| {
+        assert_eq!(pk_values[i], 1);
+        assert!(
+            ck_values.contains(&i),
+            "Expected ck_values to contain value {i}"
+        );
+    });
+
+    // Search for nearest neighbors with a filter on primary key "ck" = 1
+    let (primary_keys, _) = client
+        .ann(
+            &index.keyspace_name,
+            &index.index_name,
+            vec![1.0, 2.0, 3.0].into(),
+            Some(PostIndexAnnFilter {
+                restrictions: vec![PostIndexAnnRestriction::Eq {
+                    lhs: ck_column.clone(),
+                    rhs: 1.into(),
+                }],
+                allow_filtering: false,
+            }),
+            NonZeroUsize::new(20).unwrap().into(),
+        )
+        .await;
+    let pk_values: HashSet<_> = primary_keys
+        .get(&pk_column)
+        .unwrap()
+        .iter()
+        .map(|v| v.as_i64().unwrap() as usize)
+        .collect();
+    let ck_values: Vec<_> = primary_keys
+        .get(&ck_column)
+        .unwrap()
+        .iter()
+        .map(|v| v.as_i64().unwrap() as usize)
+        .collect();
+    assert_eq!(pk_values.len(), 3);
+    assert_eq!(ck_values.len(), 3);
+    (0..3).for_each(|i| {
+        assert!(
+            pk_values.contains(&i),
+            "Expected pk_values to contain value {i}"
+        );
+        assert_eq!(ck_values[i], 1);
+    });
 }
 
 #[tokio::test]
