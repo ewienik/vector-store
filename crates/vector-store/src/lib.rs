@@ -58,6 +58,7 @@ use utoipa::openapi::schema::Type;
 use uuid::Uuid;
 
 #[derive(Clone, derive_more::From, derive_more::Display)]
+#[from(String, &str)]
 pub struct ScyllaDbUri(String);
 
 #[derive(Clone, Debug)]
@@ -138,6 +139,7 @@ impl SerializeValue for IndexId {
     serde::Serialize,
     utoipa::ToSchema,
 )]
+#[from(String, &str)]
 /// A keyspace name in a db.
 pub struct KeyspaceName(String);
 
@@ -164,6 +166,7 @@ impl SerializeValue for KeyspaceName {
     derive_more::Display,
     utoipa::ToSchema,
 )]
+#[from(String, &str)]
 /// A name of the vector index in a db.
 pub struct IndexName(String);
 
@@ -190,6 +193,7 @@ impl SerializeValue for IndexName {
     derive_more::Display,
     utoipa::ToSchema,
 )]
+#[from(String, &str)]
 /// A table name of the table with vectors in a db
 pub struct TableName(String);
 
@@ -216,6 +220,7 @@ impl SerializeValue for TableName {
     derive_more::Display,
     utoipa::ToSchema,
 )]
+#[from(String, &str)]
 /// Name of the column in a db table.
 pub struct ColumnName(String);
 
