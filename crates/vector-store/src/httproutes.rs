@@ -5,6 +5,7 @@
 
 use crate::ColumnName;
 use crate::Distance;
+use crate::Filter;
 use crate::IndexId;
 use crate::IndexName;
 use crate::KeyspaceName;
@@ -463,7 +464,22 @@ async fn post_index_ann(
         return (StatusCode::SERVICE_UNAVAILABLE, msg).into_response();
     }
 
-    let search_result = index.ann(request.vector, request.limit).await;
+    let primary_key_columns = db_index.get_primary_key_columns().await;
+    let search_result = if false {
+        index
+            .filtered_ann(
+                request.vector,
+                Filter {
+                    restrictions: vec![],
+                    allow_filtering: false,
+                },
+                request.limit,
+            )
+            .await
+    } else {
+        index.ann(request.vector, request.limit).await
+    };
+
     // Record duration in Prometheus
     timer.observe_duration();
 
@@ -486,7 +502,6 @@ async fn post_index_ann(
                 debug!("post_index_ann: {msg}");
                 (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
             } else {
-                let primary_key_columns = db_index.get_primary_key_columns().await;
                 let primary_keys: anyhow::Result<_> = primary_key_columns
                     .iter()
                     .cloned()
