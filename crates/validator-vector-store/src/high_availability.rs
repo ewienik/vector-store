@@ -4,6 +4,7 @@
  */
 
 use async_backtrace::framed;
+use scylla::statement::Statement;
 use tracing::info;
 use vector_search_validator_tests::ScyllaNodeConfig;
 use vector_search_validator_tests::common::*;
@@ -103,7 +104,14 @@ async fn test_secondary_uri_works_correctly(actors: TestActors) {
 
     // Drop keyspace
     session
-        .query_unpaged(format!("DROP KEYSPACE {keyspace}"), ())
+        .query_unpaged(
+            {
+                let mut stmt = Statement::new(format!("DROP KEYSPACE {keyspace}"));
+                stmt.set_is_idempotent(true);
+                stmt
+            },
+            (),
+        )
         .await
         .expect("failed to drop a keyspace");
 
