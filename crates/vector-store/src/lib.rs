@@ -22,6 +22,7 @@ pub mod node_state;
 mod partition_key;
 mod primary_key;
 mod similarity;
+mod table;
 mod timestamp;
 
 pub use crate::distance::Distance;
@@ -211,6 +212,8 @@ impl SerializeValue for TableName {
     PartialEq,
     Eq,
     Hash,
+    Ord,
+    PartialOrd,
     derive_more::From,
     derive_more::AsRef,
     serde::Serialize,
@@ -548,7 +551,7 @@ impl DbCustomIndex {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DbEmbedding {
     pub primary_key: PrimaryKey,
     pub embedding: Option<Vector>,
