@@ -20,6 +20,7 @@ mod monitor_items;
 pub mod node_state;
 mod primary_key;
 mod similarity;
+mod table;
 
 pub use crate::distance::Distance;
 use crate::internals::Internals;
@@ -238,6 +239,8 @@ impl SerializeValue for TableName {
     PartialEq,
     Eq,
     Hash,
+    Ord,
+    PartialOrd,
     derive_more::From,
     derive_more::AsRef,
     serde::Serialize,
@@ -259,6 +262,9 @@ impl SerializeValue for ColumnName {
         <String as SerializeValue>::serialize(&self.0, typ, writer)
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct PartitionKey(Arc<PrimaryKey>, NonZeroUsize);
 
 #[derive(
     Copy,
@@ -575,7 +581,7 @@ impl DbCustomIndex {
     }
 }
 
-#[derive(Clone, Copy, Debug, derive_more::From, derive_more::AsRef)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, derive_more::From, derive_more::AsRef)]
 pub struct Timestamp(PrimitiveDateTime);
 
 impl Timestamp {
@@ -600,7 +606,7 @@ impl Add<Duration> for Timestamp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DbEmbedding {
     pub primary_key: PrimaryKey,
     pub embedding: Option<Vector>,
