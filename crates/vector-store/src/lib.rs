@@ -20,12 +20,14 @@ mod monitor_items;
 pub mod node_state;
 mod primary_key;
 mod similarity;
+mod timestamp;
 
 pub use crate::distance::Distance;
 use crate::internals::Internals;
 use crate::metrics::Metrics;
 use crate::node_state::NodeState;
 pub use crate::similarity::SimilarityScore;
+pub use crate::timestamp::Timestamp;
 use db::Db;
 pub use httproutes::DataType;
 pub use httproutes::IndexInfo;
@@ -45,7 +47,6 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use time::OffsetDateTime;
 use tokio::runtime::Builder;
 use tokio::runtime::Handle;
 use tokio::signal;
@@ -571,9 +572,6 @@ impl DbCustomIndex {
         IndexId::new(&self.keyspace, &self.index)
     }
 }
-
-#[derive(Clone, Copy, Debug, derive_more::From, derive_more::AsRef)]
-pub struct Timestamp(OffsetDateTime);
 
 #[derive(Debug)]
 pub struct DbEmbedding {

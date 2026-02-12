@@ -9,7 +9,6 @@ use crate::db_basic::DbBasic;
 use crate::db_basic::Table;
 use crate::wait_for;
 use crate::wait_for_value;
-use ::time::OffsetDateTime;
 use httpclient::HttpClient;
 use reqwest::StatusCode;
 use scylla::cluster::metadata::NativeType;
@@ -196,18 +195,18 @@ async fn simple_create_search_delete_index() {
             (
                 InvariantKey::new(vec![CqlValue::Int(1), CqlValue::Text("one".to_string())]).into(),
                 Some(vec![1., 1., 1.].into()),
-                OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+                Timestamp::from_unix_timestamp(10),
             ),
             (
                 InvariantKey::new(vec![CqlValue::Int(2), CqlValue::Text("two".to_string())]).into(),
                 Some(vec![2., -2., 2.].into()),
-                OffsetDateTime::from_unix_timestamp(20).unwrap().into(),
+                Timestamp::from_unix_timestamp(20),
             ),
             (
                 InvariantKey::new(vec![CqlValue::Int(3), CqlValue::Text("three".to_string())])
                     .into(),
                 Some(vec![3., 3., 3.].into()),
-                OffsetDateTime::from_unix_timestamp(30).unwrap().into(),
+                Timestamp::from_unix_timestamp(30),
             ),
         ],
     )
@@ -446,7 +445,7 @@ async fn ann_failed_when_wrong_number_of_primary_keys() {
         [(
             InvariantKey::new(vec![CqlValue::Int(1), CqlValue::Text("one".to_string())]).into(),
             Some(vec![1., 1., 1.].into()),
-            OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+            Timestamp::from_unix_timestamp(10),
         )],
     )
     .await;
@@ -494,7 +493,7 @@ async fn ann_filter_partition_key_int_eq() {
             (
                 InvariantKey::new(vec![CqlValue::Int(i / 10), CqlValue::Int(i % 10)]).into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
-                OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+                Timestamp::from_unix_timestamp(10),
             )
         }),
     )
@@ -562,7 +561,7 @@ async fn ann_filter_clustering_key_int_eq() {
             (
                 InvariantKey::new(vec![CqlValue::Int(i / 10), CqlValue::Int(i % 10)]).into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
-                OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+                Timestamp::from_unix_timestamp(10),
             )
         }),
     )
@@ -630,7 +629,7 @@ async fn ann_filter_partition_key_int_in() {
             (
                 InvariantKey::new(vec![CqlValue::Int(i / 10), CqlValue::Int(i % 10)]).into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
-                OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+                Timestamp::from_unix_timestamp(10),
             )
         }),
     )
@@ -702,7 +701,7 @@ async fn ann_filter_clustering_key_int_in() {
             (
                 InvariantKey::new(vec![CqlValue::Int(i / 10), CqlValue::Int(i % 10)]).into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
-                OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+                Timestamp::from_unix_timestamp(10),
             )
         }),
     )
@@ -774,7 +773,7 @@ async fn ann_filter_primary_key_int_eq_tuple() {
             (
                 InvariantKey::new(vec![CqlValue::Int(i / 10), CqlValue::Int(i % 10)]).into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
-                OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+                Timestamp::from_unix_timestamp(10),
             )
         }),
     )
@@ -832,7 +831,7 @@ async fn ann_filter_primary_key_int_in_tuple() {
             (
                 InvariantKey::new(vec![CqlValue::Int(i / 10), CqlValue::Int(i % 10)]).into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
-                OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+                Timestamp::from_unix_timestamp(10),
             )
         }),
     )
@@ -902,7 +901,7 @@ async fn setup_int_int_store() -> (
             (
                 InvariantKey::new(vec![CqlValue::Int(i / 10), CqlValue::Int(i % 10)]).into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
-                OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+                Timestamp::from_unix_timestamp(10),
             )
         }),
     )
@@ -1370,7 +1369,7 @@ async fn ann_filter_partition_key_text_gt() {
                 ])
                 .into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
-                OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+                Timestamp::from_unix_timestamp(10),
             )
         }),
     )
@@ -1450,7 +1449,7 @@ async fn http_server_is_responsive_when_index_add_hangs() {
         [(
             InvariantKey::new(vec![CqlValue::Int(1), CqlValue::Text("one".to_string())]).into(),
             Some(vec![1., 1., 1.].into()),
-            OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+            Timestamp::from_unix_timestamp(10),
         )],
     )
     .await;

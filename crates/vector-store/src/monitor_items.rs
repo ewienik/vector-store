@@ -71,7 +71,7 @@ async fn add(
     timestamps
         .entry(embedding.primary_key.clone())
         .and_modify(|timestamp| {
-            if timestamp.0 < embedding.timestamp.0 {
+            if *timestamp < embedding.timestamp {
                 *timestamp = embedding.timestamp;
                 remove_before_add = true;
             } else {
@@ -103,12 +103,10 @@ async fn add(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::invariant_key::InvariantKey;
     use crate::metrics::Metrics;
-
-    use super::*;
     use scylla::value::CqlValue;
-    use time::OffsetDateTime;
 
     #[tokio::test]
     async fn flow() {
@@ -129,7 +127,7 @@ mod tests {
                 DbEmbedding {
                     primary_key: InvariantKey::new(vec![CqlValue::Int(1)]).into(),
                     embedding: Some(vec![1.].into()),
-                    timestamp: OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+                    timestamp: Timestamp::from_unix_timestamp(10),
                 },
                 None,
             ))
@@ -140,7 +138,7 @@ mod tests {
                 DbEmbedding {
                     primary_key: InvariantKey::new(vec![CqlValue::Int(2)]).into(),
                     embedding: Some(vec![2.].into()),
-                    timestamp: OffsetDateTime::from_unix_timestamp(11).unwrap().into(),
+                    timestamp: Timestamp::from_unix_timestamp(11),
                 },
                 None,
             ))
@@ -152,7 +150,7 @@ mod tests {
                     // should be dropped
                     primary_key: InvariantKey::new(vec![CqlValue::Int(1)]).into(),
                     embedding: Some(vec![3.].into()),
-                    timestamp: OffsetDateTime::from_unix_timestamp(5).unwrap().into(),
+                    timestamp: Timestamp::from_unix_timestamp(5),
                 },
                 None,
             ))
@@ -164,7 +162,7 @@ mod tests {
                     // should be accepted
                     primary_key: InvariantKey::new(vec![CqlValue::Int(2)]).into(),
                     embedding: Some(vec![4.].into()),
-                    timestamp: OffsetDateTime::from_unix_timestamp(15).unwrap().into(),
+                    timestamp: Timestamp::from_unix_timestamp(15),
                 },
                 None,
             ))
@@ -175,7 +173,7 @@ mod tests {
                 DbEmbedding {
                     primary_key: InvariantKey::new(vec![CqlValue::Int(1)]).into(),
                     embedding: None,
-                    timestamp: OffsetDateTime::from_unix_timestamp(25).unwrap().into(),
+                    timestamp: Timestamp::from_unix_timestamp(25),
                 },
                 None,
             ))
@@ -187,7 +185,7 @@ mod tests {
                     // should be dropped
                     primary_key: InvariantKey::new(vec![CqlValue::Int(1)]).into(),
                     embedding: Some(vec![5.].into()),
-                    timestamp: OffsetDateTime::from_unix_timestamp(24).unwrap().into(),
+                    timestamp: Timestamp::from_unix_timestamp(24),
                 },
                 None,
             ))
@@ -198,7 +196,7 @@ mod tests {
                 DbEmbedding {
                     primary_key: InvariantKey::new(vec![CqlValue::Int(1)]).into(),
                     embedding: Some(vec![6.].into()),
-                    timestamp: OffsetDateTime::from_unix_timestamp(26).unwrap().into(),
+                    timestamp: Timestamp::from_unix_timestamp(26),
                 },
                 None,
             ))

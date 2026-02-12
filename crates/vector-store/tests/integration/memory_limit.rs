@@ -6,7 +6,6 @@
 use crate::db_basic;
 use crate::db_basic::Table;
 use crate::usearch::test_config;
-use ::time::OffsetDateTime;
 use httpclient::HttpClient;
 use scylla::cluster::metadata::NativeType;
 use scylla::value::CqlValue;
@@ -25,6 +24,7 @@ use vector_store::ExpansionSearch;
 use vector_store::IndexMetadata;
 use vector_store::Quantization;
 use vector_store::SpaceType;
+use vector_store::Timestamp;
 use vector_store::httproutes::NodeStatus;
 use vector_store::invariant_key::InvariantKey;
 
@@ -90,7 +90,7 @@ async fn memory_limit_during_index_build() {
             (
                 InvariantKey::new(vec![CqlValue::Int(i)]).into(),
                 Some(vec![0.0, 0.0, 0.0].into()),
-                OffsetDateTime::from_unix_timestamp(10).unwrap().into(),
+                Timestamp::from_unix_timestamp(10),
             )
         }),
     )
