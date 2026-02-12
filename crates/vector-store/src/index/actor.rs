@@ -9,6 +9,7 @@ use crate::Filter;
 use crate::Limit;
 use crate::PrimaryKey;
 use crate::Vector;
+use crate::table::RowId;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
@@ -17,12 +18,12 @@ pub(crate) type CountR = anyhow::Result<usize>;
 
 pub enum Index {
     Add {
-        primary_key: PrimaryKey,
+        row_id: RowId,
         embedding: Vector,
         in_progress: Option<AsyncInProgress>,
     },
     Remove {
-        primary_key: PrimaryKey,
+        row_id: RowId,
         in_progress: Option<AsyncInProgress>,
     },
     Ann {
@@ -42,27 +43,17 @@ pub enum Index {
 }
 
 pub(crate) trait IndexExt {
-    async fn add(
-        &self,
-        primary_key: PrimaryKey,
-        embedding: Vector,
-        in_progress: Option<AsyncInProgress>,
-    );
-    async fn remove(&self, primary_key: PrimaryKey, in_progress: Option<AsyncInProgress>);
+    async fn add(&self, row_id: RowId, embedding: Vector, in_progress: Option<AsyncInProgress>);
+    async fn remove(&self, row_id: RowId, in_progress: Option<AsyncInProgress>);
     async fn ann(&self, embedding: Vector, limit: Limit) -> AnnR;
     async fn filtered_ann(&self, embedding: Vector, filter: Filter, limit: Limit) -> AnnR;
     async fn count(&self) -> CountR;
 }
 
 impl IndexExt for mpsc::Sender<Index> {
-    async fn add(
-        &self,
-        primary_key: PrimaryKey,
-        embedding: Vector,
-        in_progress: Option<AsyncInProgress>,
-    ) {
+    async fn add(&self, row_id: RowId, embedding: Vector, in_progress: Option<AsyncInProgress>) {
         self.send(Index::Add {
-            primary_key,
+            row_id,
             embedding,
             in_progress,
         })
@@ -70,9 +61,9 @@ impl IndexExt for mpsc::Sender<Index> {
         .expect("internal actor should receive request");
     }
 
-    async fn remove(&self, primary_key: PrimaryKey, in_progress: Option<AsyncInProgress>) {
+    async fn remove(&self, row_id: RowId, in_progress: Option<AsyncInProgress>) {
         self.send(Index::Remove {
-            primary_key,
+            row_id,
             in_progress,
         })
         .await
