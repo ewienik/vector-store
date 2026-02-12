@@ -4,6 +4,7 @@
  */
 
 use crate::Config;
+use crate::DbIndexType;
 use crate::IndexKey;
 use crate::IndexMetadata;
 use crate::Metrics;
@@ -21,8 +22,10 @@ use crate::monitor_indexes;
 use crate::monitor_items;
 use crate::monitor_items::MonitorItems;
 use crate::node_state::NodeState;
+use crate::table::Table;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::RwLock;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
@@ -192,6 +195,28 @@ async fn add_index(
         }
     };
 
+    let primary_key_columns = db_index.get_primary_key_columns().await;
+    let table_columns = db_index.get_table_columns().await;
+    let partition_key_columns = match metadata.index_type {
+        DbIndexType::Local(partition_key_columns) => Some(partition_key_columns),
+        DbIndexType::Global => None,
+    };
+    let table = match Table::new(
+        key.clone(),
+        primary_key_columns,
+        partition_key_columns,
+        &metadata.filtering_columns,
+        table_columns,
+    ) {
+        Ok(table) => Arc::new(RwLock::new(table)),
+        Err(err) => {
+            debug!("unable to create a table cache for an index {key}: {err}");
+            tx.send(Err(err))
+                .unwrap_or_else(|_| trace!("add_index: unable to send response"));
+            return;
+        }
+    };
+
     let index_actor = match index_factory.create_index(
         IndexConfiguration {
             key: key.clone(),
@@ -202,7 +227,7 @@ async fn add_index(
             space_type: metadata.space_type,
             quantization: metadata.quantization,
         },
-        db_index.get_primary_key_columns().await,
+        Arc::clone(&table),
         memory,
     ) {
         Ok(actor) => actor,
@@ -216,6 +241,7 @@ async fn add_index(
 
     let monitor_actor = match monitor_items::new(
         key.clone(),
+        table,
         embeddings_stream,
         index_actor.clone(),
         metrics,

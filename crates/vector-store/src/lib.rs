@@ -33,6 +33,8 @@ use crate::node_state::NodeState;
 pub use crate::partition_key::PartitionKey;
 pub use crate::primary_key::PrimaryKey;
 pub use crate::similarity::SimilarityScore;
+pub use crate::table::PartitionId;
+pub use crate::table::PrimaryId;
 pub use crate::timestamp::Timestamp;
 use db::Db;
 pub use httproutes::DataType;
@@ -47,6 +49,7 @@ use scylla::serialize::writers::WrittenCellProof;
 use scylla::value::CqlValue;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
@@ -156,6 +159,8 @@ impl SerializeValue for KeyspaceName {
     PartialEq,
     Eq,
     Hash,
+    PartialOrd,
+    Ord,
     derive_more::From,
     derive_more::AsRef,
     serde::Serialize,

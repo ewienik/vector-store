@@ -303,11 +303,8 @@ async fn get_index_status(
     State(state): State<RoutesInnerState>,
     Path((keyspace_name, index_name)): Path<(KeyspaceName, IndexName)>,
 ) -> Response {
-    let Some((index, _)) = state
-        .engine
-        .get_index(IndexKey::new(&keyspace_name, &index_name))
-        .await
-    else {
+    let index_key = IndexKey::new(&keyspace_name, &index_name);
+    let Some((index, _)) = state.engine.get_index(index_key.clone()).await else {
         let msg = format!("missing index: {keyspace_name}.{index_name}");
         debug!("get_index_status: {msg}");
         return (StatusCode::NOT_FOUND, msg).into_response();
@@ -317,7 +314,7 @@ async fn get_index_status(
         .get_index_status(keyspace_name.as_ref(), index_name.as_ref())
         .await
     {
-        match index.count().await {
+        match index.count(index_key).await {
             Err(err) => {
                 let msg = format!("index.count request error: {err}");
                 debug!("get_index_status: {msg}");
@@ -347,8 +344,8 @@ async fn get_metrics(
         let keyspace = KeyspaceName::from(keyspace_str);
         let index_name = IndexName::from(index_name_str);
         let key = IndexKey::new(&keyspace, &index_name);
-        if let Some((index, _)) = state.engine.get_index(key).await
-            && let Ok(count) = index.count().await
+        if let Some((index, _)) = state.engine.get_index(key.clone()).await
+            && let Ok(count) = index.count(key).await
         {
             state
                 .metrics
@@ -570,11 +567,8 @@ async fn post_index_ann(
         .with_label_values(&[keyspace.as_ref(), index_name.as_ref()])
         .start_timer();
 
-    let Some((index, db_index)) = state
-        .engine
-        .get_index(IndexKey::new(&keyspace, &index_name))
-        .await
-    else {
+    let index_key = IndexKey::new(&keyspace, &index_name);
+    let Some((index, db_index)) = state.engine.get_index(index_key.clone()).await else {
         timer.observe_duration();
         let msg = format!("missing index: {keyspace}.{index_name}");
         debug!("post_index_ann: {msg}");
@@ -606,10 +600,10 @@ async fn post_index_ann(
             }
         };
         index
-            .filtered_ann(request.vector, filter, request.limit)
+            .filtered_ann(index_key, request.vector, filter, request.limit)
             .await
     } else {
-        index.ann(request.vector, request.limit).await
+        index.ann(index_key, request.vector, request.limit).await
     };
 
     // Record duration in Prometheus

@@ -380,7 +380,11 @@ async fn ann_returns_bad_request_when_provided_vector_size_is_not_eq_index_dimen
             ("pk".to_string().into(), NativeType::Int),
             ("ck".to_string().into(), NativeType::Text),
         ],
-        [],
+        [(
+            [CqlValue::Int(1), CqlValue::Text("one".to_string())].into(),
+            Some(vec![1., 1., 1.].into()),
+            Timestamp::from_unix_timestamp(10),
+        )],
     )
     .await;
 
@@ -778,37 +782,19 @@ async fn ann_filter_primary_key_int_eq_tuple() {
     .await;
 
     // Search for nearest neighbors with a filter on primary key ("pk", "ck") = (1, 5)
-    let (primary_keys, _, _) = client
-        .ann(
-            &index.keyspace_name,
-            &index.index_name,
-            vec![1.0, 2.0, 3.0].into(),
-            Some(PostIndexAnnFilter {
-                restrictions: vec![PostIndexAnnRestriction::EqTuple {
-                    lhs: vec![pk_column.clone(), ck_column.clone()],
-                    rhs: vec![1.into(), 5.into()],
-                }],
-                allow_filtering: false,
-            }),
-            NonZeroUsize::new(100).unwrap().into(),
-        )
-        .await;
-    let pk_values: Vec<_> = primary_keys
-        .get(&pk_column)
-        .unwrap()
-        .iter()
-        .map(|v| v.as_i64().unwrap() as usize)
-        .collect();
-    let ck_values: Vec<_> = primary_keys
-        .get(&ck_column)
-        .unwrap()
-        .iter()
-        .map(|v| v.as_i64().unwrap() as usize)
-        .collect();
-    assert_eq!(pk_values.len(), 1);
-    assert_eq!(ck_values.len(), 1);
-    assert_eq!(pk_values.first(), Some(&1));
-    assert_eq!(ck_values.first(), Some(&5));
+    let pk_ck_values = run_ann_filter_int_int(
+        &client,
+        &index,
+        &pk_column,
+        &ck_column,
+        vec![PostIndexAnnRestriction::EqTuple {
+            lhs: vec![pk_column.clone(), ck_column.clone()],
+            rhs: vec![1.into(), 5.into()],
+        }],
+        1,
+    )
+    .await;
+    assert_pk_ck_combinations(&pk_ck_values, [(1, 5)]);
 }
 
 #[tokio::test]
@@ -836,43 +822,19 @@ async fn ann_filter_primary_key_int_in_tuple() {
     .await;
 
     // Search for nearest neighbors with a filter on primary key ("pk", "ck") IN ((0,7), (1, 5))
-    let (primary_keys, _, _) = client
-        .ann(
-            &index.keyspace_name,
-            &index.index_name,
-            vec![1.0, 2.0, 3.0].into(),
-            Some(PostIndexAnnFilter {
-                restrictions: vec![PostIndexAnnRestriction::InTuple {
-                    lhs: vec![pk_column.clone(), ck_column.clone()],
-                    rhs: vec![vec![0.into(), 7.into()], vec![1.into(), 5.into()]],
-                }],
-                allow_filtering: false,
-            }),
-            NonZeroUsize::new(100).unwrap().into(),
-        )
-        .await;
-    let pk_ck_values: HashSet<_> = primary_keys
-        .get(&pk_column)
-        .unwrap()
-        .iter()
-        .map(|v| v.as_i64().unwrap() as usize)
-        .zip(
-            primary_keys
-                .get(&ck_column)
-                .unwrap()
-                .iter()
-                .map(|v| v.as_i64().unwrap() as usize),
-        )
-        .collect();
-    assert_eq!(pk_ck_values.len(), 2);
-    assert!(
-        pk_ck_values.contains(&(0, 7)),
-        "Expected pk_ck_values to contain value (0, 7)"
-    );
-    assert!(
-        pk_ck_values.contains(&(1, 5)),
-        "Expected pk_ck_values to contain value (1, 5)"
-    );
+    let pk_ck_values = run_ann_filter_int_int(
+        &client,
+        &index,
+        &pk_column,
+        &ck_column,
+        vec![PostIndexAnnRestriction::InTuple {
+            lhs: vec![pk_column.clone(), ck_column.clone()],
+            rhs: vec![vec![0.into(), 7.into()], vec![1.into(), 5.into()]],
+        }],
+        2,
+    )
+    .await;
+    assert_pk_ck_combinations(&pk_ck_values, [(0, 7), (1, 5)]);
 }
 
 /// Sets up a store with pk (Int) and ck (Int) columns with 30 vectors.
