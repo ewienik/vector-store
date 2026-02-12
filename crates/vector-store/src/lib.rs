@@ -42,10 +42,13 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
+use std::ops::Add;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use time::OffsetDateTime;
+use time::Date;
+use time::PrimitiveDateTime;
+use time::Time;
 use tokio::runtime::Builder;
 use tokio::runtime::Handle;
 use tokio::signal;
@@ -573,7 +576,29 @@ impl DbCustomIndex {
 }
 
 #[derive(Clone, Copy, Debug, derive_more::From, derive_more::AsRef)]
-pub struct Timestamp(OffsetDateTime);
+pub struct Timestamp(PrimitiveDateTime);
+
+impl Timestamp {
+    pub const UNIX_EPOCH: Timestamp = Timestamp(PrimitiveDateTime::new(
+        match Date::from_ordinal_date(1970, 1) {
+            Ok(date) => date,
+            Err(_) => panic!("Invalid date for UNIX epoch"),
+        },
+        Time::MIDNIGHT,
+    ));
+
+    pub fn from_unix_timestamp(timestamp: i64) -> Self {
+        Self::UNIX_EPOCH + Duration::from_secs(timestamp as u64)
+    }
+}
+
+impl Add<Duration> for Timestamp {
+    type Output = Timestamp;
+
+    fn add(self, rhs: Duration) -> Self::Output {
+        Timestamp(self.0 + rhs)
+    }
+}
 
 #[derive(Debug)]
 pub struct DbEmbedding {

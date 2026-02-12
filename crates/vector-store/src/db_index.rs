@@ -13,6 +13,7 @@ use crate::Percentage;
 use crate::PrimaryKey;
 use crate::Progress;
 use crate::TableName;
+use crate::Timestamp;
 use crate::internals::Internals;
 use crate::internals::InternalsExt;
 use crate::invariant_key::InvariantKey;
@@ -22,6 +23,7 @@ use crate::node_state::NodeStateExt;
 use ::time::Date;
 use ::time::Month;
 use ::time::OffsetDateTime;
+use ::time::PrimitiveDateTime;
 use ::time::Time;
 use anyhow::Context;
 use anyhow::anyhow;
@@ -727,8 +729,7 @@ impl Statements {
                     debug!("range_scan_stream: bad type of a writetime");
                     return None;
                 };
-                let timestamp =
-                    (OffsetDateTime::UNIX_EPOCH + Duration::from_micros(timestamp as u64)).into();
+                let timestamp = Timestamp::UNIX_EPOCH + Duration::from_micros(timestamp as u64);
 
                 let Some(CqlValue::Vector(embedding)) = row.columns.pop().unwrap() else {
                     debug!("range_scan_stream: bad type of an embedding");
@@ -789,7 +790,7 @@ struct CdcConsumerData {
     primary_key_columns: Vec<ColumnName>,
     target_column: ColumnName,
     tx: mpsc::Sender<(DbEmbedding, Option<AsyncInProgress>)>,
-    gregorian_epoch: OffsetDateTime,
+    gregorian_epoch: PrimitiveDateTime,
 }
 
 struct CdcConsumer(Arc<CdcConsumerData>);
@@ -902,7 +903,7 @@ impl CdcConsumerFactory {
             .map(ColumnName::from)
             .collect();
 
-        let gregorian_epoch = OffsetDateTime::new_utc(
+        let gregorian_epoch = PrimitiveDateTime::new(
             Date::from_calendar_date(1582, Month::October, 15)?,
             Time::MIDNIGHT,
         );
