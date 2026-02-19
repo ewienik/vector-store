@@ -10,7 +10,6 @@ use crate::DbEmbedding;
 use crate::IndexMetadata;
 use crate::KeyspaceName;
 use crate::Percentage;
-use crate::PrimaryKey;
 use crate::Progress;
 use crate::TableName;
 use crate::Timestamp;
@@ -759,16 +758,11 @@ impl Statements {
                         };
                         Ok(value)
                     })
-                    .collect::<anyhow::Result<Vec<_>>>()
+                    .collect::<anyhow::Result<_>>()
                     .inspect_err(|err| debug!("range_scan_stream: {err}"))
                 else {
                     return None;
                 };
-                let primary_key = PrimaryKey::from(
-                    InvariantKey::try_new(primary_key)
-                        .inspect_err(|err| debug!("range_scan_stream: {err}"))
-                        .ok()?,
-                );
 
                 Some(DbEmbedding {
                     primary_key,
@@ -841,8 +835,7 @@ impl Consumer for CdcConsumer {
                     "CDC error: primary key column {column} value should exist"
                 ))
             })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        let primary_key = PrimaryKey::from(InvariantKey::try_new(primary_key)?);
+            .collect::<anyhow::Result<_>>()?;
 
         const HUNDREDS_NANOS_TO_MICROS: u64 = 10;
         let timestamp = (self.0.gregorian_epoch

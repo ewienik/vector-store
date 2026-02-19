@@ -1134,7 +1134,6 @@ mod tests {
     use crate::ExpansionSearch;
     use crate::IndexKey;
     use crate::index::IndexExt;
-    use crate::invariant_key::InvariantKey;
     use crate::memory;
     use scylla::value::CqlValue;
     use std::num::NonZeroUsize;
@@ -1159,7 +1158,7 @@ mod tests {
                     let id = worker * adds_per_worker + offset;
                     actor
                         .add(
-                            InvariantKey::new(vec![CqlValue::Int(id as i32)]).into(),
+                            [CqlValue::Int(id as i32)].into(),
                             vec![0.0f32; dimensions.get()].into(),
                             None,
                         )
@@ -1218,22 +1217,21 @@ mod tests {
 
         actor
             .add(
-                InvariantKey::new(vec![CqlValue::Int(1), CqlValue::Text("one".to_string())]).into(),
+                [CqlValue::Int(1), CqlValue::Text("one".to_string())].into(),
                 vec![1., 1., 1.].into(),
                 None,
             )
             .await;
         actor
             .add(
-                InvariantKey::new(vec![CqlValue::Int(2), CqlValue::Text("two".to_string())]).into(),
+                [CqlValue::Int(2), CqlValue::Text("two".to_string())].into(),
                 vec![2., -2., 2.].into(),
                 None,
             )
             .await;
         actor
             .add(
-                InvariantKey::new(vec![CqlValue::Int(3), CqlValue::Text("three".to_string())])
-                    .into(),
+                [CqlValue::Int(3), CqlValue::Text("three".to_string())].into(),
                 vec![3., 3., 3.].into(),
                 None,
             )
@@ -1258,20 +1256,18 @@ mod tests {
         assert_eq!(distances.len(), 1);
         assert_eq!(
             primary_keys.first().unwrap(),
-            &InvariantKey::new(vec![CqlValue::Int(2), CqlValue::Text("two".to_string())]).into(),
+            &[CqlValue::Int(2), CqlValue::Text("two".to_string())].into(),
         );
 
         actor
             .remove(
-                InvariantKey::new(vec![CqlValue::Int(3), CqlValue::Text("three".to_string())])
-                    .into(),
+                [CqlValue::Int(3), CqlValue::Text("three".to_string())].into(),
                 None,
             )
             .await;
         actor
             .add(
-                InvariantKey::new(vec![CqlValue::Int(3), CqlValue::Text("three".to_string())])
-                    .into(),
+                [CqlValue::Int(3), CqlValue::Text("three".to_string())].into(),
                 vec![2.1, -2.1, 2.1].into(),
                 None,
             )
@@ -1288,8 +1284,7 @@ mod tests {
                 .0
                 .first()
                 .unwrap()
-                != &InvariantKey::new(vec![CqlValue::Int(3), CqlValue::Text("three".to_string())])
-                    .into()
+                != &[CqlValue::Int(3), CqlValue::Text("three".to_string())].into()
             {
                 task::yield_now().await;
             }
@@ -1299,8 +1294,7 @@ mod tests {
 
         actor
             .remove(
-                InvariantKey::new(vec![CqlValue::Int(3), CqlValue::Text("three".to_string())])
-                    .into(),
+                [CqlValue::Int(3), CqlValue::Text("three".to_string())].into(),
                 None,
             )
             .await;
@@ -1324,7 +1318,7 @@ mod tests {
         assert_eq!(distances.len(), 1);
         assert_eq!(
             primary_keys.first().unwrap(),
-            &InvariantKey::new(vec![CqlValue::Int(2), CqlValue::Text("two".to_string())]).into(),
+            &[CqlValue::Int(2), CqlValue::Text("two".to_string())].into(),
         );
     }
 
@@ -1359,11 +1353,7 @@ mod tests {
             memory_rx
         });
         actor
-            .add(
-                InvariantKey::new(vec![CqlValue::Int(1)]).into(),
-                vec![1., 1., 1.].into(),
-                None,
-            )
+            .add([CqlValue::Int(1)].into(), vec![1., 1., 1.].into(), None)
             .await;
         let mut memory_rx = memory_respond.await.unwrap();
         assert_eq!(actor.count().await.unwrap(), 0);
@@ -1373,11 +1363,7 @@ mod tests {
             _ = tx.send(Allocate::Can);
         });
         actor
-            .add(
-                InvariantKey::new(vec![CqlValue::Int(1)]).into(),
-                vec![1., 1., 1.].into(),
-                None,
-            )
+            .add([CqlValue::Int(1)].into(), vec![1., 1., 1.].into(), None)
             .await;
         memory_respond.await.unwrap();
 
@@ -1522,13 +1508,8 @@ mod tests {
 
     mod cql_cmp_tuple_tests {
         use super::super::{ColumnName, PrimaryKey, cql_cmp_tuple};
-        use crate::invariant_key::InvariantKey;
         use scylla::value::CqlValue;
         use std::cmp::Ordering;
-
-        fn make_primary_key(values: Vec<CqlValue>) -> PrimaryKey {
-            InvariantKey::new(values).into()
-        }
 
         fn primary_key_value_fn(
             columns: &[ColumnName],
@@ -1544,7 +1525,7 @@ mod tests {
         #[test]
         fn equal_tuples() {
             let columns: Vec<ColumnName> = vec!["a".to_string().into(), "b".to_string().into()];
-            let pk = make_primary_key(vec![CqlValue::Int(1), CqlValue::Int(2)]);
+            let pk = [CqlValue::Int(1), CqlValue::Int(2)].into();
             let lhs: Vec<ColumnName> = vec!["a".to_string().into(), "b".to_string().into()];
             let rhs = vec![CqlValue::Int(1), CqlValue::Int(2)];
 
@@ -1555,7 +1536,7 @@ mod tests {
         #[test]
         fn first_element_differs() {
             let columns: Vec<ColumnName> = vec!["a".to_string().into(), "b".to_string().into()];
-            let pk = make_primary_key(vec![CqlValue::Int(1), CqlValue::Int(2)]);
+            let pk = [CqlValue::Int(1), CqlValue::Int(2)].into();
             let lhs: Vec<ColumnName> = vec!["a".to_string().into(), "b".to_string().into()];
             let rhs = vec![CqlValue::Int(2), CqlValue::Int(2)];
 
@@ -1566,7 +1547,7 @@ mod tests {
         #[test]
         fn second_element_differs() {
             let columns: Vec<ColumnName> = vec!["a".to_string().into(), "b".to_string().into()];
-            let pk = make_primary_key(vec![CqlValue::Int(1), CqlValue::Int(3)]);
+            let pk = [CqlValue::Int(1), CqlValue::Int(3)].into();
             let lhs: Vec<ColumnName> = vec!["a".to_string().into(), "b".to_string().into()];
             let rhs = vec![CqlValue::Int(1), CqlValue::Int(2)];
 
@@ -1577,7 +1558,7 @@ mod tests {
         #[test]
         fn missing_column_returns_none() {
             let columns: Vec<ColumnName> = vec!["a".to_string().into()];
-            let pk = make_primary_key(vec![CqlValue::Int(1)]);
+            let pk = [CqlValue::Int(1)].into();
             let lhs: Vec<ColumnName> = vec!["a".to_string().into(), "b".to_string().into()];
             let rhs = vec![CqlValue::Int(1), CqlValue::Int(2)];
 
@@ -1588,7 +1569,7 @@ mod tests {
         #[test]
         fn incomparable_types_returns_none() {
             let columns: Vec<ColumnName> = vec!["a".to_string().into()];
-            let pk = make_primary_key(vec![CqlValue::Int(1)]);
+            let pk = [CqlValue::Int(1)].into();
             let lhs: Vec<ColumnName> = vec!["a".to_string().into()];
             let rhs = vec![CqlValue::BigInt(1)]; // Different type
 
@@ -1599,7 +1580,7 @@ mod tests {
         #[test]
         fn empty_tuples_are_equal() {
             let columns: Vec<ColumnName> = vec![];
-            let pk = make_primary_key(vec![]);
+            let pk = [].into();
             let lhs: Vec<ColumnName> = vec![];
             let rhs: Vec<CqlValue> = vec![];
 

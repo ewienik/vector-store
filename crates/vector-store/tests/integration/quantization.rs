@@ -18,7 +18,6 @@ use vector_store::Timestamp;
 use vector_store::httproutes;
 use vector_store::httproutes::PostIndexAnnFilter;
 use vector_store::httproutes::PostIndexAnnRestriction;
-use vector_store::invariant_key::InvariantKey;
 
 #[tokio::test]
 // This test verifies that quantization is applied correctly by observing its effect on search results.
@@ -45,7 +44,7 @@ async fn quantization_is_effectively_applied() {
         search_vector: Vec<f32>,
     ) -> httproutes::Distance {
         let values = [(
-            InvariantKey::new(vec![CqlValue::Int(1)]).into(),
+            [CqlValue::Int(1)].into(),
             Some(add_vector.into()),
             Timestamp::from_unix_timestamp(10),
         )];
@@ -163,7 +162,7 @@ async fn search_with_quantization(quantization: Quantization, filter: Option<Pos
     let pk_value = 1;
     let pk_column: ColumnName = "pk".into();
     let vectors = vec![(
-        InvariantKey::new(vec![CqlValue::Int(pk_value)]).into(),
+        [CqlValue::Int(pk_value)].into(),
         Some(vector.clone().into()),
         Timestamp::from_unix_timestamp(10),
     )];
@@ -266,7 +265,7 @@ async fn binary_quantization_with_non_divisible_by_8_dimensions() {
     let pk_value = 1;
     let pk_column: ColumnName = "pk".into();
     let vectors = vec![(
-        InvariantKey::new(vec![CqlValue::Int(pk_value)]).into(),
+        [CqlValue::Int(pk_value)].into(),
         Some(vector.clone().into()),
         Timestamp::from_unix_timestamp(10),
     )];

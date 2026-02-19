@@ -3,25 +3,36 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-//! CQL primary key type backed by [`InvariantKey`](crate::invariant_key::InvariantKey).
-
 use crate::invariant_key::InvariantKey;
-use derive_more::Deref;
-use derive_more::From;
-use std::fmt;
+use scylla::value::CqlValue;
 
-/// A memory-optimized CQL primary key.
-///
 /// This is a thin newtype around [`InvariantKey`] providing primary-key-specific
-/// semantics. Cloning is O(1) because `InvariantKey` uses `Arc` internally.
-#[derive(Clone, Deref, PartialEq, Eq, From, Hash)]
+/// semantics.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PrimaryKey(InvariantKey);
 
-impl fmt::Debug for PrimaryKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.debug_fmt(f, "PrimaryKey")
+impl PrimaryKey {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn get(&self, idx: usize) -> Option<CqlValue> {
+        self.0.get(idx)
     }
 }
 
-// Static assertion: PrimaryKey must be exactly 16 bytes (same as InvariantKey).
-const _: () = assert!(std::mem::size_of::<PrimaryKey>() == 16);
+impl FromIterator<CqlValue> for PrimaryKey {
+    fn from_iter<I: IntoIterator<Item = CqlValue>>(iter: I) -> Self {
+        Self(InvariantKey::from_iter(iter))
+    }
+}
+
+impl<I: IntoIterator<Item = CqlValue>> From<I> for PrimaryKey {
+    fn from(iter: I) -> Self {
+        Self(InvariantKey::from_iter(iter))
+    }
+}
