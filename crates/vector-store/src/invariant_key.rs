@@ -98,7 +98,7 @@ const UUID_SIZE: usize = 16;
 /// and more correct than the previous `format!("{:?}")` hashing approach.
 ///
 /// The inner buffer is reference-counted via [`Arc`], so cloning is O(1).
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct InvariantKey {
     data: Arc<[u8]>,
 }

@@ -12,7 +12,7 @@ mod httpserver;
 mod index;
 mod info;
 mod internals;
-pub mod invariant_key;
+mod invariant_key;
 mod memory;
 mod metrics;
 mod monitor_indexes;
@@ -32,6 +32,7 @@ pub use httproutes::DataType;
 pub use httproutes::IndexInfo;
 use index::factory;
 pub use index::factory::IndexFactory;
+pub use invariant_key::InvariantKey;
 pub use primary_key::PrimaryKey;
 use scylla::cluster::metadata::ColumnType;
 use scylla::serialize::SerializationError;
@@ -41,6 +42,7 @@ use scylla::serialize::writers::WrittenCellProof;
 use scylla::value::CqlValue;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::ops::Add;
@@ -183,6 +185,8 @@ impl SerializeValue for KeyspaceName {
     PartialEq,
     Eq,
     Hash,
+    PartialOrd,
+    Ord,
     derive_more::From,
     derive_more::AsRef,
     serde::Serialize,
@@ -265,6 +269,17 @@ impl SerializeValue for ColumnName {
 
 #[derive(Clone, Debug)]
 pub struct PartitionKey(Arc<PrimaryKey>, NonZeroUsize);
+
+#[derive(Clone, Debug)]
+struct LocalIndexKeyPartition {
+    primary_key: Arc<PrimaryKey>,
+    size: NonZeroUsize,
+}
+
+#[derive(Clone, Debug)]
+pub enum LocalIndexKey {
+    Partition(LocalIndexKeyPartition),
+}
 
 #[derive(
     Copy,

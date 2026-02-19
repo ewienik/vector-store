@@ -5,7 +5,8 @@
 
 use crate::ColumnName;
 use crate::DbEmbedding;
-use crate::PartitionKey;
+use crate::IndexName;
+use crate::LocalIndexKey;
 use crate::PrimaryKey;
 use crate::Restriction;
 use crate::Timestamp;
@@ -20,6 +21,7 @@ use scylla::value::CqlTimeuuid;
 use scylla::value::CqlValue;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::collections::btree_map::Entry;
@@ -34,7 +36,7 @@ trait Idx {
     fn idx(&self) -> usize;
 }
 
-mod row_id_epoch {
+mod row_id {
     use super::*;
 
     #[derive(
@@ -111,17 +113,38 @@ mod row_id_epoch {
         }
     }
 }
-use row_id_epoch::Epoch;
-pub use row_id_epoch::RowId;
+use row_id::Epoch;
+pub use row_id::RowId;
 
 mod partition_id {
     use super::*;
+    use std::sync::atomic::AtomicU16;
+    use std::sync::atomic::Ordering;
 
     #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, derive_more::From)]
     pub(crate) struct PartitionId(u64);
 
+    const _: () = assert!(
+        mem::size_of::<PartitionId>() == mem::size_of::<usize>(),
+        "PartitionId should be the same size as usize"
+    );
+
     impl PartitionId {
-        pub(super) const GLOBAL: PartitionId = PartitionId(0);
+        const INDEX_ID_SHIFT: usize = (mem::size_of::<u64>() - mem::size_of::<ViewId>()) * 8;
+        const MAX: u64 = !((ViewId::MAX as u64) << Self::INDEX_ID_SHIFT);
+
+        pub(super) fn try_new(idx: usize, view_id: ViewId) -> anyhow::Result<Self> {
+            if idx as u64 > Self::MAX {
+                bail!("PartitionId is too large: {idx}");
+            }
+            Ok(Self(
+                (*view_id.as_ref() as u64) << Self::INDEX_ID_SHIFT | idx as u64,
+            ))
+        }
+
+        pub(super) fn view_id(&self) -> ViewId {
+            ViewId((self.0 >> Self::INDEX_ID_SHIFT) as u16)
+        }
     }
 
     impl Idx for PartitionId {
@@ -129,48 +152,88 @@ mod partition_id {
             self.0 as usize
         }
     }
+
+    #[derive(
+        Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, derive_more::AsRef, derive_more::From,
+    )]
+    pub(super) struct ViewId(u16);
+
+    impl ViewId {
+        pub(super) const GLOBAL: ViewId = ViewId(0);
+        const MAX: u16 = u16::MAX;
+    }
+
+    pub(super) struct ViewIdGenerator {
+        next: u16,
+    }
+
+    impl ViewIdGenerator {
+        pub(super) fn new() -> Self {
+            Self {
+                next: ViewId::GLOBAL.0 + 1,
+            }
+        }
+
+        pub(super) fn next(&mut self) -> anyhow::Result<ViewId> {
+            if self.next > ViewId::MAX {
+                bail!("No more ViewIds available");
+            }
+            let view_id = ViewId(self.next);
+            self.next += 1;
+            Ok(view_id)
+        }
+    }
 }
 use partition_id::PartitionId;
+use partition_id::ViewId;
+use partition_id::ViewIdGenerator;
+
+#[derive(Clone, Copy, Debug, derive_more::From, derive_more::Into, derive_more::AsRef)]
+struct PartitionSize(usize);
 
 mod column_vec {
     use super::*;
 
-    pub(super) struct ColumnVec<T> {
+    pub(super) struct ColumnVec<I, T> {
         vec: Vec<T>,
+        _index: std::marker::PhantomData<I>,
     }
 
-    impl<T> ColumnVec<T> {
+    impl<I: Idx, T> ColumnVec<I, T> {
         pub(super) fn new() -> Self {
-            Self { vec: Vec::new() }
+            Self {
+                vec: Vec::new(),
+                _index: std::marker::PhantomData,
+            }
         }
 
         pub(super) fn resize_with(&mut self, size: usize, f: impl FnMut() -> T) {
             self.vec.resize_with(size, f);
         }
 
-        pub(super) fn get(&self, idx: usize) -> Option<&T> {
-            self.vec.get(idx)
+        pub(super) fn get(&self, idx: I) -> Option<&T> {
+            self.vec.get(idx.idx())
         }
 
-        pub(super) fn get_mut(&mut self, idx: usize) -> Option<&mut T> {
-            self.vec.get_mut(idx)
+        pub(super) fn get_mut(&mut self, idx: I) -> Option<&mut T> {
+            self.vec.get_mut(idx.idx())
         }
 
-        pub(super) fn update(&mut self, idx: impl Idx, value: T) -> anyhow::Result<()> {
+        pub(super) fn update(&mut self, idx: I, value: T) -> anyhow::Result<()> {
             *self
-                .get_mut(idx.idx())
+                .get_mut(idx)
                 .ok_or_else(|| anyhow!("Index out of ColumnVec bounds"))? = value;
             Ok(())
         }
     }
 
-    impl<T> ColumnVec<ColumnValue<T>> {
+    impl<T> ColumnVec<RowId, ColumnValue<T>> {
         pub(super) fn update_epoch_timestamp(
             &mut self,
             row_id: RowId,
             timestamp: Timestamp,
         ) -> anyhow::Result<()> {
-            self.get_mut(row_id.idx())
+            self.get_mut(row_id)
                 .map(|value| {
                     value.update_epoch_timestamp(row_id.epoch(), timestamp);
                 })
@@ -210,22 +273,22 @@ impl<T> ColumnValue<T> {
 }
 
 enum Column {
-    Ascii(ColumnVec<ColumnValue<String>>),
-    BigInt(ColumnVec<ColumnValue<i64>>),
-    Blob(ColumnVec<ColumnValue<Vec<u8>>>),
-    Boolean(ColumnVec<ColumnValue<bool>>),
-    Date(ColumnVec<ColumnValue<CqlDate>>),
-    Double(ColumnVec<ColumnValue<f64>>),
-    Float(ColumnVec<ColumnValue<f32>>),
-    Inet(ColumnVec<ColumnValue<IpAddr>>),
-    Int(ColumnVec<ColumnValue<i32>>),
-    SmallInt(ColumnVec<ColumnValue<i16>>),
-    Text(ColumnVec<ColumnValue<String>>),
-    Time(ColumnVec<ColumnValue<CqlTime>>),
-    Timestamp(ColumnVec<ColumnValue<CqlTimestamp>>),
-    Timeuuid(ColumnVec<ColumnValue<CqlTimeuuid>>),
-    TinyInt(ColumnVec<ColumnValue<i8>>),
-    Uuid(ColumnVec<ColumnValue<Uuid>>),
+    Ascii(ColumnVec<RowId, ColumnValue<String>>),
+    BigInt(ColumnVec<RowId, ColumnValue<i64>>),
+    Blob(ColumnVec<RowId, ColumnValue<Vec<u8>>>),
+    Boolean(ColumnVec<RowId, ColumnValue<bool>>),
+    Date(ColumnVec<RowId, ColumnValue<CqlDate>>),
+    Double(ColumnVec<RowId, ColumnValue<f64>>),
+    Float(ColumnVec<RowId, ColumnValue<f32>>),
+    Inet(ColumnVec<RowId, ColumnValue<IpAddr>>),
+    Int(ColumnVec<RowId, ColumnValue<i32>>),
+    SmallInt(ColumnVec<RowId, ColumnValue<i16>>),
+    Text(ColumnVec<RowId, ColumnValue<String>>),
+    Time(ColumnVec<RowId, ColumnValue<CqlTime>>),
+    Timestamp(ColumnVec<RowId, ColumnValue<CqlTimestamp>>),
+    Timeuuid(ColumnVec<RowId, ColumnValue<CqlTimeuuid>>),
+    TinyInt(ColumnVec<RowId, ColumnValue<i8>>),
+    Uuid(ColumnVec<RowId, ColumnValue<Uuid>>),
 }
 
 impl Column {
@@ -409,82 +472,82 @@ impl Column {
     fn get(&self, row_id: RowId) -> Option<CqlValue> {
         match self {
             Self::Ascii(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Ascii),
             Self::BigInt(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::BigInt),
             Self::Blob(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Blob),
             Self::Boolean(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Boolean),
             Self::Date(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Date),
             Self::Double(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Double),
             Self::Float(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Float),
             Self::Inet(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Inet),
             Self::Int(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Int),
             Self::SmallInt(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::SmallInt),
             Self::Text(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Text),
             Self::Time(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Time),
             Self::Timestamp(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Timestamp),
             Self::Timeuuid(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Timeuuid),
             Self::TinyInt(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::TinyInt),
             Self::Uuid(vec) => vec
-                .get(row_id.idx())
+                .get(row_id)
                 .and_then(|val| val.get())
                 .cloned()
                 .map(CqlValue::Uuid),
@@ -557,83 +620,83 @@ fn compare_rows(
 ) -> Option<Ordering> {
     match (lhs, rhs) {
         (Column::Ascii(lhs), Column::Ascii(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::BigInt(lhs), Column::BigInt(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Blob(lhs), Column::Blob(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Boolean(lhs), Column::Boolean(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Date(lhs), Column::Date(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.0.cmp(&rhs_value.0))
         }
         (Column::Double(lhs), Column::Double(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             lhs_value.partial_cmp(rhs_value)
         }
         (Column::Float(lhs), Column::Float(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             lhs_value.partial_cmp(rhs_value)
         }
         (Column::Inet(lhs), Column::Inet(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Int(lhs), Column::Int(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::SmallInt(lhs), Column::SmallInt(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Text(lhs), Column::Text(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Time(lhs), Column::Time(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.0.cmp(&rhs_value.0))
         }
         (Column::Timestamp(lhs), Column::Timestamp(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.0.cmp(&rhs_value.0))
         }
         (Column::Timeuuid(lhs), Column::Timeuuid(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::TinyInt(lhs), Column::TinyInt(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Uuid(lhs), Column::Uuid(rhs)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
-            let rhs_value = rhs.get(rhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
+            let rhs_value = rhs.get(rhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         _ => None,
@@ -643,73 +706,74 @@ fn compare_rows(
 fn compare_row_with_cqlvalue(lhs: &Column, lhs_row_id: RowId, rhs: &CqlValue) -> Option<Ordering> {
     match (lhs, rhs) {
         (Column::Ascii(lhs), CqlValue::Ascii(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::BigInt(lhs), CqlValue::BigInt(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Blob(lhs), CqlValue::Blob(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Boolean(lhs), CqlValue::Boolean(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Date(lhs), CqlValue::Date(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.0.cmp(&rhs_value.0))
         }
         (Column::Double(lhs), CqlValue::Double(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             lhs_value.partial_cmp(rhs_value)
         }
         (Column::Float(lhs), CqlValue::Float(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             lhs_value.partial_cmp(rhs_value)
         }
         (Column::Inet(lhs), CqlValue::Inet(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Int(lhs), CqlValue::Int(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::SmallInt(lhs), CqlValue::SmallInt(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Text(lhs), CqlValue::Text(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Time(lhs), CqlValue::Time(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.0.cmp(&rhs_value.0))
         }
         (Column::Timestamp(lhs), CqlValue::Timestamp(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.0.cmp(&rhs_value.0))
         }
         (Column::Timeuuid(lhs), CqlValue::Timeuuid(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::TinyInt(lhs), CqlValue::TinyInt(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         (Column::Uuid(lhs), CqlValue::Uuid(rhs_value)) => {
-            let lhs_value = lhs.get(lhs_row_id.idx())?.get()?;
+            let lhs_value = lhs.get(lhs_row_id)?.get()?;
             Some(lhs_value.cmp(rhs_value))
         }
         _ => None,
     }
 }
 
+/*
 struct RowMapK {
     columns: Arc<RwLock<Columns>>,
     row_id: RowId,
@@ -745,8 +809,6 @@ impl PartialEq for RowMapK {
 impl Eq for RowMapK {}
 
 impl PartialOrd for RowMapK {
-    // TODO: remove allow
-    #[allow(clippy::non_canonical_partial_ord_impl)]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         let columns = self.columns.read().unwrap();
         let other_columns = other.columns.read().unwrap();
@@ -819,8 +881,6 @@ impl PartialEq for PartitionMapK {
 impl Eq for PartitionMapK {}
 
 impl PartialOrd for PartitionMapK {
-    // TODO: remove allow
-    #[allow(clippy::non_canonical_partial_ord_impl)]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         let columns = self.columns.read().unwrap();
         let other_columns = other.columns.read().unwrap();
@@ -859,6 +919,7 @@ impl Ord for PartitionMapK {
         self.partial_cmp(other).unwrap()
     }
 }
+*/
 
 struct FreeRowIds(VecDeque<RowId>);
 
@@ -898,6 +959,7 @@ impl FreePartitionIds {
     }
 }
 
+/*
 enum Partition {
     None,
     Some {
@@ -908,10 +970,10 @@ enum Partition {
         free_ids: FreePartitionIds,
 
         /// A map from RowId to PartitionId
-        ids: ColumnVec<PartitionId>,
+        ids: ColumnVec<RowId, PartitionId>,
 
         /// A map from PartitionId to the number of rows in the partition
-        sizes: ColumnVec<usize>,
+        sizes: ColumnVec<PartitionId, usize>,
     },
 }
 
@@ -994,14 +1056,14 @@ impl Partition {
                 }) {
                     Entry::Occupied(entry) => {
                         let partition_id = *entry.get();
-                        *sizes.get_mut(partition_id.idx()).ok_or_else(|| {
+                        *sizes.get_mut(partition_id).ok_or_else(|| {
                             anyhow!("PartitionId index out of partition sizes bounds")
                         })? += 1;
                         partition_id
                     }
                     Entry::Vacant(entry) => {
                         let partition_id = free_ids.peek_id()?;
-                        *sizes.get_mut(partition_id.idx()).ok_or_else(|| {
+                        *sizes.get_mut(partition_id).ok_or_else(|| {
                             anyhow!("PartitionId index out of partition sizes bounds")
                         })? = 1;
                         entry.insert(partition_id);
@@ -1030,7 +1092,7 @@ impl Partition {
                     return Ok(None);
                 }
                 let size = sizes
-                    .get_mut(partition_id.idx())
+                    .get_mut(partition_id)
                     .ok_or_else(|| anyhow!("RowId index out of partition sizes bounds"))?;
                 if *size == 0 {
                     warn!(
@@ -1048,58 +1110,246 @@ impl Partition {
         match self {
             Self::None => Ok(PartitionId::GLOBAL),
             Self::Some { ids, .. } => ids
-                .get(row_id.idx())
+                .get(row_id)
                 .copied()
                 .ok_or_else(|| anyhow!("RowId index out of partition ids bounds")),
         }
     }
 }
+*/
+
+enum IndexData {
+    Global {
+        keys: ColumnVec<RowId, Option<Arc<PrimaryKey>>>,
+    },
+    Local {
+        view_id: ViewId,
+
+        /// A map from index key to RowId
+        map: BTreeMap<LocalIndexKey, PartitionId>,
+        free_ids: FreePartitionIds,
+        keys: ColumnVec<PartitionId, Option<LocalIndexKey>>,
+        ids: ColumnVec<RowId, Option<PartitionId>>,
+
+        /// A size of each partition
+        sizes: ColumnVec<PartitionId, usize>,
+    },
+}
+
+impl IndexData {
+    fn partition_id(&self, row_id: RowId) -> Option<PartitionId> {
+        match self {
+            Self::Global { .. } => PartitionId::try_new(0, ViewId::GLOBAL).ok(),
+            Self::Local { ids, .. } => ids.get(row_id).copied().flatten(),
+        }
+    }
+
+    /// Returns true if partition is empty
+    fn remove_row(&mut self, row_id: RowId) -> bool {
+        match self {
+            Self::Global { .. } => false,
+            Self::Local {
+                ids, keys, sizes, ..
+            } => {
+                let Some(Some(partition_id)) = ids.get_mut(row_id).take() else {
+                    return false;
+                };
+
+                keys.get_mut(*partition_id).take();
+                sizes
+                    .get_mut(*partition_id)
+                    .map(|size| {
+                        if *size > 0 {
+                            *size -= 1;
+                        }
+                        *size == 0
+                    })
+                    .unwrap_or(false)
+            }
+        }
+    }
+}
+
+struct Index {
+    data: IndexData,
+
+    /// Column names for which the index is built. The order of column names is important, as it
+    /// defines the order of values in the index key.
+    key_columns: Arc<Vec<ColumnName>>,
+
+    /// Additional filtering columns used for this index.
+    filtering_columns: Arc<Vec<ColumnName>>,
+
+    /// All column names that are used in this index (key columns + filtering columns)
+    available_columns: BTreeSet<ColumnName>,
+
+    /// Timestamps of the last vector update
+    vector_timestamps: ColumnVec<RowId, ColumnValue<()>>,
+}
+
+impl Index {
+    const INCREMENT_SIZE: usize = 2 ^ 8;
+
+    fn new_global(
+        key_columns: Arc<Vec<ColumnName>>,
+        filtering_columns: Arc<Vec<ColumnName>>,
+    ) -> Self {
+        Self {
+            data: IndexData::Global {
+                keys: ColumnVec::new(),
+            },
+            available_columns: key_columns
+                .iter()
+                .chain(filtering_columns.iter())
+                .cloned()
+                .collect(),
+            key_columns,
+            filtering_columns,
+            vector_timestamps: ColumnVec::new(),
+        }
+    }
+
+    fn new_partition(
+        view_id: ViewId,
+        key_columns: Arc<Vec<ColumnName>>,
+        filtering_columns: Arc<Vec<ColumnName>>,
+    ) -> Self {
+        Self {
+            data: IndexData::Local {
+                view_id,
+                map: BTreeMap::new(),
+                free_ids: FreePartitionIds(VecDeque::new()),
+                keys: ColumnVec::new(),
+                ids: ColumnVec::new(),
+                sizes: ColumnVec::new(),
+            },
+            available_columns: key_columns
+                .iter()
+                .chain(filtering_columns.iter())
+                .cloned()
+                .collect(),
+            key_columns,
+            filtering_columns,
+            vector_timestamps: ColumnVec::new(),
+        }
+    }
+
+    fn resize_row_ids_with(&mut self, new_size: usize) {
+        match &mut self.data {
+            IndexData::Global { keys } => keys.resize_with(new_size, || None),
+            IndexData::Local { ids, .. } => ids.resize_with(new_size, || None),
+        }
+        self.vector_timestamps.resize_with(new_size, || {
+            ColumnValue::None(Epoch::new(), Timestamp::UNIX_EPOCH)
+        });
+    }
+
+    fn resize_partition_ids(&mut self) -> anyhow::Result<()> {
+        let IndexData::Local {
+            view_id,
+            map,
+            free_ids,
+            keys,
+            sizes,
+            ..
+        } = &mut self.data
+        else {
+            return Ok(());
+        };
+        if !free_ids.0.is_empty() {
+            return Ok(());
+        }
+        let start = map.len();
+        let end = start + Self::INCREMENT_SIZE;
+        free_ids.0.reserve(Self::INCREMENT_SIZE);
+        (start..end)
+            .map(|id| PartitionId::try_new(id, *view_id))
+            .try_for_each(|id| {
+                id.map(|id| {
+                    free_ids.0.push_back(id);
+                })
+            })?;
+        keys.resize_with(end, || None);
+        sizes.resize_with(end, || None);
+        Ok(())
+    }
+}
 
 pub struct Table {
-    /// A map from RowId::idx to current Epoch
-    row_map: BTreeMap<RowMapK, Epoch>,
-
-    /// A queue for free RowIds
+    row_map: BTreeMap<Arc<PrimaryKey>, RowId>,
     free_row_ids: FreeRowIds,
 
-    /// A storage for column values, indexed by RowId
-    columns: Arc<RwLock<Columns>>,
+    columns: BTreeMap<ColumnName, Column>,
 
-    /// A map from RowId to the Timestamp of the last vector update
-    vector_timestamps: ColumnVec<ColumnValue<()>>,
-
-    /// Storage for partition/local index data
-    partition: Partition,
+    view_id_generator: ViewIdGenerator,
+    view_ids: BTreeMap<IndexName, ViewId>,
+    indexes: BTreeMap<ViewId, Index>,
 }
 
 impl Table {
     const ROWS_INCREMENT_SIZE: usize = 2 ^ 10;
 
     pub(crate) fn new(
+        index_name: IndexName,
         primary_key_columns: Arc<Vec<ColumnName>>,
         partition_key_columns: Option<Arc<Vec<ColumnName>>>,
+        filtering_columns: Arc<Vec<ColumnName>>,
         table_columns: Arc<HashMap<ColumnName, NativeType>>,
     ) -> anyhow::Result<Self> {
-        let partition = Partition::new(partition_key_columns.is_some());
+        let mut view_id_generator = ViewIdGenerator::new();
+        let mut indexes = BTreeMap::new();
+        let mut view_ids = BTreeMap::new();
+        indexes.insert(
+            ViewId::GLOBAL,
+            Index::new_global(
+                Arc::clone(&primary_key_columns),
+                Arc::clone(&filtering_columns),
+            ),
+        );
+        if let Some(partition_key_columns) = partition_key_columns.as_ref() {
+            let view_id = view_id_generator.next()?;
+            indexes.insert(
+                view_id,
+                Index::new_partition(
+                    view_id,
+                    Arc::clone(partition_key_columns),
+                    Arc::clone(&filtering_columns),
+                ),
+            );
+            view_ids.insert(index_name, view_id);
+        } else {
+            view_ids.insert(index_name, ViewId::GLOBAL);
+        }
+        let columns = primary_key_columns
+            .iter()
+            .chain(
+                partition_key_columns
+                    .as_ref()
+                    .map(|vec| vec.as_slice())
+                    .unwrap_or(&[])
+                    .iter(),
+            )
+            .map(|name| {
+                table_columns
+                    .get(name)
+                    .ok_or_else(|| anyhow::anyhow!("Column {name} not found in table columns"))
+                    .and_then(Column::new)
+                    .map(|column| (name.clone(), column))
+            })
+            .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
         let mut table = Self {
             row_map: BTreeMap::new(),
             free_row_ids: FreeRowIds(VecDeque::new()),
-
-            columns: Arc::new(RwLock::new(Columns::new(
-                primary_key_columns,
-                partition_key_columns,
-                &table_columns,
-            )?)),
-            vector_timestamps: ColumnVec::new(),
-
-            partition,
+            columns,
+            view_id_generator,
+            view_ids,
+            indexes,
         };
-        table.reserve_row_ids()?;
-        table.partition.reserve_ids()?;
+        table.reserve_ids()?;
         Ok(table)
     }
 
-    fn reserve_row_ids(&mut self) -> anyhow::Result<()> {
+    fn reserve_ids(&mut self) -> anyhow::Result<()> {
         if !self.free_row_ids.0.is_empty() {
             return Ok(());
         }
@@ -1115,16 +1365,19 @@ impl Table {
         if self.free_row_ids.0.is_empty() {
             bail!("Failed to reserve vector ids: no more ids available");
         }
-        let end = start + self.free_row_ids.0.len();
+        let new_size = start + self.free_row_ids.0.len();
 
-        self.columns.write().unwrap().resize_with(end);
-        self.vector_timestamps.resize_with(end, || {
-            ColumnValue::None(Epoch::new(), Timestamp::UNIX_EPOCH)
-        });
-        self.partition.resize_row_to_partition_map(end);
+        self.columns
+            .iter_mut()
+            .for_each(|(_, column)| column.resize_with(new_size));
+        self.indexes.iter_mut().try_for_each(|(_, index)| {
+            index.resize_row_ids_with(new_size);
+            index.resize_partition_ids()
+        })?;
         Ok(())
     }
 
+    /*
     fn insert_primary_key(
         &mut self,
         row_id: RowId,
@@ -1145,86 +1398,98 @@ impl Table {
         self.vector_timestamps
             .update(row_id, ColumnValue::Some(row_id.epoch(), timestamp, ()))
     }
+    */
 }
 
 #[cfg_attr(test, mockall::automock)]
 pub(crate) trait TableAdd {
-    fn add(&mut self, db_embedding: DbEmbedding) -> anyhow::Result<[Option<Operation>; 2]>;
+    fn add(
+        &mut self,
+        name: &IndexName,
+        db_embedding: DbEmbedding,
+    ) -> anyhow::Result<Vec<Operation>>;
 }
 
 impl TableAdd for Table {
-    fn add(&mut self, db_embedding: DbEmbedding) -> anyhow::Result<[Option<Operation>; 2]> {
-        self.reserve_row_ids()?;
-        self.partition.reserve_ids()?;
+    fn add(
+        &mut self,
+        name: &IndexName,
+        db_embedding: DbEmbedding,
+    ) -> anyhow::Result<Vec<Operation>> {
+        self.reserve_ids()?;
 
-        let mut operations = [None, None];
+        let mut operations = vec![];
 
-        let row_id = self.free_row_ids.peek_id()?;
-        self.insert_primary_key(row_id, db_embedding.timestamp, db_embedding.primary_key)?;
-        let columns = &self.columns;
-        let partition = &mut self.partition;
-        let vector_timestamps = &mut self.vector_timestamps;
+        //let row_id = self.free_row_ids.peek_id()?;
+        //self.insert_primary_key(row_id, db_embedding.timestamp, db_embedding.primary_key)?;
+        //let columns = &self.columns;
+        //let partition = &mut self.partition;
+        //let vector_timestamps = &mut self.vector_timestamps;
 
-        // TODO: remove this allow
-        #[allow(clippy::mutable_key_type)]
         let row_map = &mut self.row_map;
 
-        match row_map.entry(RowMapK {
-            columns: Arc::clone(columns),
-            row_id,
-        }) {
+        match row_map.entry(Arc::new(db_embedding.primary_key)) {
             Entry::Occupied(mut entry) => {
-                let row_id = entry.key().row_id;
-                let epoch = *entry.get();
-                let (vector_epoch, timestamp, vector_already_exists) =
-                    match vector_timestamps.get(row_id.idx()) {
+                let row_id = *entry.get();
+                self.indexes.iter_mut().try_for_each(|(view_id, index)| {
+                    let (epoch, timestamp, vector_already_exists) = match index
+                        .vector_timestamps
+                        .get(row_id)
+                    {
                         Some(ColumnValue::Some(epoch, timestamp, _)) => (*epoch, timestamp, true),
                         Some(ColumnValue::None(epoch, timestamp)) => (*epoch, timestamp, false),
                         None => {
-                            bail!("Failed to update vector: missing vector timestamp");
+                            bail!(
+                                "Failed to update vector: \
+                                missing vector timestamp for view {view_id:?} and row_id {row_id:?}"
+                            );
                         }
                     };
-                if epoch != vector_epoch {
-                    bail!("Failed to update vector: vector epoch mismatch");
-                }
-                if timestamp.0 >= db_embedding.timestamp.0 {
-                    return Ok(operations);
-                }
-                let row_id = row_id.new_epoch(epoch);
-                let partition_id = partition.partition_id(row_id)?;
-                if let Some(vector) = db_embedding.embedding {
-                    if vector_already_exists {
-                        operations[0] = Some(Operation::RemoveBeforeAddVector {
-                            row_id,
-                            partition_id,
-                        });
+                    if timestamp.0 >= db_embedding.timestamp.0 {
+                        return Ok(());
                     }
+                    let row_id = row_id.new_epoch(epoch);
+                    let partition_id = index.data.partition_id(row_id).ok_or_else(|| {
+                        anyhow!(
+                            "Failed to update vector: \
+                            missing partition id for view {view_id:?} and row_id {row_id:?}"
+                        )
+                    })?;
+                    if let Some(vector) = db_embedding.embedding {
+                        if vector_already_exists {
+                            operations.push(Operation::RemoveBeforeAddVector {
+                                row_id,
+                                partition_id,
+                            });
+                        }
 
-                    let row_id = row_id.next_epoch();
-                    let timestamp = db_embedding.timestamp;
-                    vector_timestamps
-                        .update(row_id, ColumnValue::Some(row_id.epoch(), timestamp, ()))?;
-                    columns
-                        .write()
-                        .unwrap()
-                        .update_primary_key_epoch_timestamp(row_id, timestamp)?;
-                    operations[1] = Some(Operation::AddVector {
-                        row_id,
-                        partition_id,
-                        vector,
-                    });
-                } else {
-                    if vector_already_exists {
-                        operations[0] = Some(Operation::RemoveVector {
+                        let row_id = row_id.next_epoch();
+                        let timestamp = db_embedding.timestamp;
+                        index
+                            .vector_timestamps
+                            .update(row_id, ColumnValue::Some(row_id.epoch(), timestamp, ()))?;
+                        operations.push(Operation::AddVector {
                             row_id,
                             partition_id,
+                            vector,
                         });
+                    } else {
+                        let epoch = row_id.epoch().next();
+                        index
+                            .vector_timestamps
+                            .update(row_id, ColumnValue::None(epoch, *timestamp))?;
+                        if vector_already_exists {
+                            operations.push(Operation::RemoveVector {
+                                row_id,
+                                partition_id,
+                            });
+                            if index.data.remove_row(row_id) {
+                                operations.push(Operation::RemovePartition { partition_id });
+                            }
+                        }
                     }
-                    if let Some(partition_id) = partition.remove_row(row_id)? {
-                        operations[1] = Some(Operation::RemovePartition { partition_id });
-                    }
-                }
-                entry.insert(row_id.epoch());
+                    Ok(())
+                })?;
                 Ok(operations)
             }
             Entry::Vacant(entry) => {

@@ -66,9 +66,14 @@ async fn add(
     metrics: &Metrics,
     id: &IndexId,
 ) {
-    let Ok(operations) = table.write().unwrap().add(embedding).inspect_err(|err| {
-        error!("failed to add embedding to table cache: {err}");
-    }) else {
+    let Ok(operations) = table
+        .write()
+        .unwrap()
+        .add(&id.index(), embedding)
+        .inspect_err(|err| {
+            error!("failed to add embedding to table cache: {err}");
+        })
+    else {
         return;
     };
     let in_progress = &mut in_progress;

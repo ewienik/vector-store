@@ -201,7 +201,13 @@ async fn add_index(
         DbIndexType::Local(partition_key_columns) => Some(partition_key_columns),
         DbIndexType::Global => None,
     };
-    let table = match Table::new(primary_key_columns, partition_key_columns, table_columns) {
+    let table = match Table::new(
+        metadata.index_name,
+        primary_key_columns,
+        partition_key_columns,
+        Arc::clone(&metadata.filtering_columns),
+        table_columns,
+    ) {
         Ok(table) => Arc::new(RwLock::new(table)),
         Err(err) => {
             debug!("unable to create a table cache for an index {id}: {err}");
