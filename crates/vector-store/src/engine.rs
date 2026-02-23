@@ -239,7 +239,7 @@ async fn add_index(
 
 async fn del_index(id: IndexId, indexes: &mut IndexesT) {
     indexes.remove(&id);
-    info!("removing the index {id}");
+    info!("removed the index {id}");
 }
 
 async fn get_index(id: IndexId, tx: oneshot::Sender<GetIndexR>, indexes: &IndexesT) {
