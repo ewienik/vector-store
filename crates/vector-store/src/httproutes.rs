@@ -5,7 +5,7 @@
 
 use crate::ColumnName;
 use crate::Filter;
-use crate::IndexId;
+use crate::IndexKey;
 use crate::IndexName;
 use crate::KeyspaceName;
 use crate::Limit;
@@ -218,12 +218,12 @@ impl IndexInfo {
 async fn get_indexes(State(state): State<RoutesInnerState>) -> Response {
     let indexes: Vec<_> = state
         .engine
-        .get_index_ids()
+        .get_index_keys()
         .await
         .iter()
-        .map(|(id, quantization)| IndexInfo {
-            keyspace: id.keyspace(),
-            index: id.index(),
+        .map(|(key, quantization)| IndexInfo {
+            keyspace: key.keyspace(),
+            index: key.index(),
             data_type: (*quantization).into(),
         })
         .collect();
@@ -305,7 +305,7 @@ async fn get_index_status(
 ) -> Response {
     let Some((index, _)) = state
         .engine
-        .get_index(IndexId::new(&keyspace_name, &index_name))
+        .get_index(IndexKey::new(&keyspace_name, &index_name))
         .await
     else {
         let msg = format!("missing index: {keyspace_name}.{index_name}");
@@ -346,8 +346,8 @@ async fn get_metrics(
     for (keyspace_str, index_name_str) in state.metrics.take_dirty_indexes() {
         let keyspace = KeyspaceName::from(keyspace_str);
         let index_name = IndexName::from(index_name_str);
-        let id = IndexId::new(&keyspace, &index_name);
-        if let Some((index, _)) = state.engine.get_index(id).await
+        let key = IndexKey::new(&keyspace, &index_name);
+        if let Some((index, _)) = state.engine.get_index(key).await
             && let Ok(count) = index.count().await
         {
             state
@@ -572,7 +572,7 @@ async fn post_index_ann(
 
     let Some((index, db_index)) = state
         .engine
-        .get_index(IndexId::new(&keyspace, &index_name))
+        .get_index(IndexKey::new(&keyspace, &index_name))
         .await
     else {
         timer.observe_duration();

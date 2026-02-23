@@ -5,7 +5,7 @@
 
 use crate::AsyncInProgress;
 use crate::DbEmbedding;
-use crate::IndexId;
+use crate::IndexKey;
 use crate::Metrics;
 use crate::PrimaryKey;
 use crate::Timestamp;
@@ -23,7 +23,7 @@ use tracing::debug_span;
 pub(crate) enum MonitorItems {}
 
 pub(crate) async fn new(
-    id: IndexId,
+    key: IndexKey,
     mut embeddings: Receiver<(DbEmbedding, Option<AsyncInProgress>)>,
     index: Sender<Index>,
     metrics: Arc<Metrics>,
@@ -31,7 +31,7 @@ pub(crate) async fn new(
     // The value was taken from initial benchmarks
     const CHANNEL_SIZE: usize = 10;
     let (tx, mut rx) = mpsc::channel(CHANNEL_SIZE);
-    let id_for_span = id.clone();
+    let key_for_span = key.clone();
 
     tokio::spawn(
         async move {
@@ -45,7 +45,7 @@ pub(crate) async fn new(
                         let Some((embedding, in_progress)) = embedding else {
                             break;
                         };
-                        add(&mut timestamps, &index, embedding, in_progress, &metrics, &id).await;
+                        add(&mut timestamps, &index, embedding, in_progress, &metrics, &key).await;
                     }
                     _ = rx.recv() => { }
                 }
@@ -53,7 +53,7 @@ pub(crate) async fn new(
 
             debug!("finished");
         }
-        .instrument(debug_span!("monitor items", "{id_for_span}")),
+        .instrument(debug_span!("monitor items", "{key_for_span}")),
     );
     Ok(tx)
 }
@@ -64,7 +64,7 @@ async fn add(
     embedding: DbEmbedding,
     in_progress: Option<AsyncInProgress>,
     metrics: &Metrics,
-    id: &IndexId,
+    key: &IndexKey,
 ) {
     let mut modify = true;
     let mut remove_before_add = false;
@@ -84,7 +84,7 @@ async fn add(
         if let Some(embedding) = embedding.embedding {
             metrics
                 .modified
-                .with_label_values(&[id.keyspace().as_ref(), id.index().as_ref(), "update"])
+                .with_label_values(&[key.keyspace().as_ref(), key.index().as_ref(), "update"])
                 .inc();
             if remove_before_add {
                 index.remove(primary_key.clone(), None).await;
@@ -93,11 +93,11 @@ async fn add(
         } else {
             metrics
                 .modified
-                .with_label_values(&[id.keyspace().as_ref(), id.index().as_ref(), "remove"])
+                .with_label_values(&[key.keyspace().as_ref(), key.index().as_ref(), "remove"])
                 .inc();
             index.remove(primary_key, in_progress).await;
         }
-        metrics.mark_dirty(id.keyspace().as_ref(), id.index().as_ref());
+        metrics.mark_dirty(key.keyspace().as_ref(), key.index().as_ref());
     }
 }
 
@@ -114,7 +114,7 @@ mod tests {
         let (tx_index, mut rx_index) = mpsc::channel(10);
         let metrics: Arc<Metrics> = Arc::new(Metrics::new());
         let _actor = new(
-            IndexId::new(&"vector".to_string().into(), &"store".to_string().into()),
+            IndexKey::new(&"vector".to_string().into(), &"store".to_string().into()),
             rx_embeddings,
             tx_index,
             metrics,

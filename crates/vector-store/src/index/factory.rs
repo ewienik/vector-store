@@ -8,7 +8,7 @@ use crate::Connectivity;
 use crate::Dimensions;
 use crate::ExpansionAdd;
 use crate::ExpansionSearch;
-use crate::IndexId;
+use crate::IndexKey;
 use crate::Quantization;
 use crate::SpaceType;
 use crate::index::actor::Index;
@@ -17,7 +17,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 pub struct IndexConfiguration {
-    pub id: IndexId,
+    pub key: IndexKey,
     pub dimensions: Dimensions,
     pub connectivity: Connectivity,
     pub expansion_add: ExpansionAdd,

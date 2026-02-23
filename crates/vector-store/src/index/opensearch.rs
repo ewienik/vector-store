@@ -10,7 +10,7 @@ use crate::Distance;
 use crate::ExpansionAdd;
 use crate::ExpansionSearch;
 use crate::IndexFactory;
-use crate::IndexId;
+use crate::IndexKey;
 use crate::Limit;
 use crate::PrimaryKey;
 use crate::SpaceType;
@@ -91,7 +91,7 @@ impl IndexFactory for OpenSearchIndexFactory {
         _: mpsc::Sender<Memory>,
     ) -> anyhow::Result<mpsc::Sender<Index>> {
         new(
-            index.id,
+            index.key,
             index.dimensions,
             index.connectivity,
             index.expansion_add,
@@ -161,7 +161,7 @@ pub fn new_opensearch(
 struct Key(u64);
 
 async fn create_index(
-    id: &IndexId,
+    key: &IndexKey,
     dimensions: Dimensions,
     connectivity: Connectivity,
     expansion_add: ExpansionAdd,
@@ -171,7 +171,7 @@ async fn create_index(
 ) -> Result<opensearch::http::response::Response, ()> {
     let response: Result<opensearch::http::response::Response, ()> = client
         .indices()
-        .create(IndicesCreateParts::Index(&id.0))
+        .create(IndicesCreateParts::Index(key.as_ref()))
         .body(json!({
             "settings": {
                 "index.knn": true
@@ -213,14 +213,14 @@ async fn create_index(
             opensearch::http::response::Response::error_for_status_code,
         )
         .map_err(|err| {
-            error!("engine::new: unable to create index with id {id}: {err}");
+            error!("engine::new: unable to create index with key {key}: {err}");
         });
 
     response
 }
 
 pub fn new(
-    id: IndexId,
+    key: IndexKey,
     dimensions: Dimensions,
     connectivity: Connectivity,
     expansion_add: ExpansionAdd,
@@ -228,16 +228,16 @@ pub fn new(
     space_type: SpaceType,
     client: Arc<OpenSearch>,
 ) -> anyhow::Result<mpsc::Sender<Index>> {
-    info!("Creating new index with id: {id}");
+    info!("Creating new index with key: {key}");
     // TODO: The value of channel size was taken from initial benchmarks. Needs more testing
     const CHANNEL_SIZE: usize = 10;
     let (tx, mut rx) = mpsc::channel(CHANNEL_SIZE);
 
     tokio::spawn({
-        let cloned_id = id.clone();
+        let cloned_key = key.clone();
         async move {
             let response = create_index(
-                &id,
+                &key,
                 dimensions,
                 connectivity,
                 expansion_add,
@@ -248,7 +248,7 @@ pub fn new(
             .await;
 
             if response.is_err() {
-                error!("engine::new: unable to create index with id {id}");
+                error!("engine::new: unable to create index with key {key}");
                 return;
             }
 
@@ -266,12 +266,12 @@ pub fn new(
             // so we set the semaphore to 2, so we always have something in queue.
             let semaphore = Arc::new(Semaphore::new(2));
 
-            let id = Arc::new(id);
+            let key = Arc::new(key);
 
             while let Some(msg) = rx.recv().await {
                 let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
                 tokio::spawn({
-                    let id = Arc::clone(&id);
+                    let key = Arc::clone(&key);
                     let keys = Arc::clone(&keys);
                     let opensearch_key = Arc::clone(&opensearch_key);
                     let client = Arc::clone(&client);
@@ -280,7 +280,7 @@ pub fn new(
                             msg,
                             dimensions,
                             space_type,
-                            id,
+                            key,
                             keys,
                             opensearch_key,
                             client,
@@ -293,7 +293,7 @@ pub fn new(
 
             debug!("finished");
         }
-        .instrument(debug_span!("opensearch", "{cloned_id}"))
+        .instrument(debug_span!("opensearch", "{cloned_key}"))
     });
 
     Ok(tx)
@@ -303,7 +303,7 @@ async fn process(
     msg: Index,
     dimensions: Dimensions,
     space_type: SpaceType,
-    id: Arc<IndexId>,
+    key: Arc<IndexKey>,
     keys: Arc<RwLock<BiMap<PrimaryKey, Key>>>,
     opensearch_key: Arc<AtomicU64>,
     client: Arc<OpenSearch>,
@@ -313,28 +313,28 @@ async fn process(
             primary_key,
             embedding,
             in_progress: _in_progress,
-        } => add_or_replace(id, keys, opensearch_key, primary_key, embedding, client).await,
+        } => add_or_replace(key, keys, opensearch_key, primary_key, embedding, client).await,
         Index::Remove {
             primary_key,
             in_progress: _in_progress,
-        } => remove(id, keys, primary_key, client).await,
+        } => remove(key, keys, primary_key, client).await,
         Index::Ann {
             embedding,
             limit,
             tx,
         } => {
             ann(
-                id, tx, keys, embedding, dimensions, limit, space_type, client,
+                key, tx, keys, embedding, dimensions, limit, space_type, client,
             )
             .await
         }
         Index::FilteredAnn { tx, .. } => filtered_ann(tx).await,
-        Index::Count { tx } => count(id, tx, client).await,
+        Index::Count { tx } => count(key, tx, client).await,
     }
 }
 
 async fn add_or_replace(
-    id: Arc<IndexId>,
+    index_key: Arc<IndexKey>,
     keys: Arc<RwLock<BiMap<PrimaryKey, Key>>>,
     opensearch_key: Arc<AtomicU64>,
     primary_key: PrimaryKey,
@@ -360,7 +360,10 @@ async fn add_or_replace(
 
     if remove {
         let response = client
-            .delete(DeleteParts::IndexId(&id.0, &key.0.to_string()))
+            .delete(DeleteParts::IndexId(
+                index_key.as_ref().as_ref(),
+                &key.0.to_string(),
+            ))
             .send()
             .await
             .map_or_else(
@@ -377,7 +380,10 @@ async fn add_or_replace(
     }
 
     let response = client
-        .index(IndexParts::IndexId(&id.0, &key.0.to_string()))
+        .index(IndexParts::IndexId(
+            index_key.as_ref().as_ref(),
+            &key.0.to_string(),
+        ))
         .body(json!({
             "vector": embeddings.0,
         }))
@@ -397,7 +403,7 @@ async fn add_or_replace(
 }
 
 async fn remove(
-    id: Arc<IndexId>,
+    index_key: Arc<IndexKey>,
     keys: Arc<RwLock<BiMap<PrimaryKey, Key>>>,
     primary_key: PrimaryKey,
     client: Arc<OpenSearch>,
@@ -405,7 +411,10 @@ async fn remove(
     let (primary_key, key) = keys.write().unwrap().remove_by_left(&primary_key).unwrap();
 
     let response = client
-        .delete(DeleteParts::IndexId(&id.0, &key.0.to_string()))
+        .delete(DeleteParts::IndexId(
+            index_key.as_ref().as_ref(),
+            &key.0.to_string(),
+        ))
         .send()
         .await
         .map_or_else(
@@ -423,7 +432,7 @@ async fn remove(
 
 #[allow(clippy::too_many_arguments)]
 async fn ann(
-    id: Arc<IndexId>,
+    key: Arc<IndexKey>,
     tx_ann: oneshot::Sender<AnnR>,
     keys: Arc<RwLock<BiMap<PrimaryKey, Key>>>,
     embedding: Vector,
@@ -439,7 +448,7 @@ async fn ann(
     }
 
     let response = client
-        .search(opensearch::SearchParts::Index(&[&id.0]))
+        .search(opensearch::SearchParts::Index(&[key.as_ref().as_ref()]))
         .body(json!({
             "query": {
                 "knn": {
@@ -516,9 +525,9 @@ async fn filtered_ann(tx_ann: oneshot::Sender<AnnR>) {
     _ = tx_ann.send(Err(anyhow!("Filtering not supported")));
 }
 
-async fn count(id: Arc<IndexId>, tx: oneshot::Sender<CountR>, client: Arc<OpenSearch>) {
+async fn count(key: Arc<IndexKey>, tx: oneshot::Sender<CountR>, client: Arc<OpenSearch>) {
     let response = client
-        .count(opensearch::CountParts::Index(&[&id.0]))
+        .count(opensearch::CountParts::Index(&[key.as_ref().as_ref()]))
         .send()
         .await
         .map_or_else(

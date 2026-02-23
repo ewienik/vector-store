@@ -10,6 +10,7 @@ mod engine;
 pub mod httproutes;
 mod httpserver;
 mod index;
+mod index_key;
 mod info;
 mod internals;
 pub mod invariant_key;
@@ -23,6 +24,7 @@ mod similarity;
 mod timestamp;
 
 pub use crate::distance::Distance;
+pub use crate::index_key::IndexKey;
 use crate::internals::Internals;
 use crate::metrics::Metrics;
 use crate::node_state::NodeState;
@@ -115,35 +117,6 @@ pub struct Credentials {
     pub username: Option<String>,
     pub password: Option<secrecy::SecretString>,
     pub certificate_path: Option<std::path::PathBuf>,
-}
-
-#[derive(
-    Clone, Hash, Eq, PartialEq, Debug, PartialOrd, Ord, derive_more::Display, derive_more::AsRef,
-)]
-pub struct IndexId(String);
-
-impl IndexId {
-    pub fn new(keyspace: &KeyspaceName, index: &IndexName) -> Self {
-        Self(format!("{}.{}", keyspace.0, index.0))
-    }
-
-    pub fn keyspace(&self) -> KeyspaceName {
-        self.0.split_once('.').unwrap().0.to_string().into()
-    }
-
-    pub fn index(&self) -> IndexName {
-        self.0.split_once('.').unwrap().1.to_string().into()
-    }
-}
-
-impl SerializeValue for IndexId {
-    fn serialize<'b>(
-        &self,
-        typ: &ColumnType,
-        writer: CellWriter<'b>,
-    ) -> Result<WrittenCellProof<'b>, SerializationError> {
-        <String as SerializeValue>::serialize(&self.0, typ, writer)
-    }
 }
 
 #[derive(
@@ -546,8 +519,8 @@ pub struct IndexMetadata {
 }
 
 impl IndexMetadata {
-    pub fn id(&self) -> IndexId {
-        IndexId::new(&self.keyspace_name, &self.index_name)
+    pub fn key(&self) -> IndexKey {
+        IndexKey::new(&self.keyspace_name, &self.index_name)
     }
 }
 
@@ -568,8 +541,8 @@ pub struct DbCustomIndex {
 }
 
 impl DbCustomIndex {
-    pub fn id(&self) -> IndexId {
-        IndexId::new(&self.keyspace, &self.index)
+    pub fn key(&self) -> IndexKey {
+        IndexKey::new(&self.keyspace, &self.index)
     }
 }
 

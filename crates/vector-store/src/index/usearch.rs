@@ -9,7 +9,7 @@ use crate::Dimensions;
 use crate::Distance;
 use crate::Filter;
 use crate::IndexFactory;
-use crate::IndexId;
+use crate::IndexKey;
 use crate::Limit;
 use crate::PrimaryKey;
 use crate::Quantization;
@@ -81,7 +81,7 @@ impl IndexFactory for UsearchIndexFactory {
                 let idx = Arc::new(ThreadedUsearchIndex::new(options, threads)?);
                 new(
                     idx,
-                    index.id,
+                    index.key,
                     index.dimensions,
                     primary_key_columns,
                     Arc::clone(&self.tokio_semaphore),
@@ -90,10 +90,10 @@ impl IndexFactory for UsearchIndexFactory {
                 )
             }
             Mode::Simulator { config, config_rx } => {
-                let sim = Simulator::new(config.clone(), config_rx.clone(), index.id.clone());
+                let sim = Simulator::new(config.clone(), config_rx.clone(), index.key.clone());
                 new(
                     sim,
-                    index.id,
+                    index.key,
                     index.dimensions,
                     primary_key_columns,
                     Arc::clone(&self.tokio_semaphore),
@@ -268,7 +268,7 @@ impl Simulator {
     fn new(
         config: Arc<Config>,
         mut config_rx: watch::Receiver<Arc<Config>>,
-        id: IndexId,
+        key: IndexKey,
     ) -> Arc<RwLock<Self>> {
         let mut sim = Self {
             config: Arc::new(Config::default()),
@@ -299,7 +299,7 @@ impl Simulator {
                     }
                 }
             }
-            .instrument(debug_span!("simulator", "{}", id)),
+            .instrument(debug_span!("simulator", "{}", key)),
         );
 
         sim
@@ -670,7 +670,7 @@ impl<I: UsearchIndex + Send + Sync + 'static> IndexState<I> {
 
 fn new<I: UsearchIndex + Send + Sync + 'static>(
     idx: Arc<I>,
-    id: IndexId,
+    key: IndexKey,
     dimensions: Dimensions,
     primary_key_columns: Arc<Vec<ColumnName>>,
     tokio_semaphore: Arc<Semaphore>,
@@ -685,7 +685,7 @@ fn new<I: UsearchIndex + Send + Sync + 'static>(
 
     tokio::spawn(
         {
-            let id = id.clone();
+            let key = key.clone();
             async move {
                 debug!("starting");
                 let idx = Arc::new(IndexState::new(Arc::clone(&idx), dimensions));
@@ -694,7 +694,7 @@ fn new<I: UsearchIndex + Send + Sync + 'static>(
                 let mut operation = operation::Operation::new();
 
                 while let Some(msg) = rx.recv().await {
-                    if !check_memory_allocation(&msg, &memory, &mut allocate_prev, &id).await {
+                    if !check_memory_allocation(&msg, &memory, &mut allocate_prev, &key).await {
                         continue;
                     }
 
@@ -714,7 +714,7 @@ fn new<I: UsearchIndex + Send + Sync + 'static>(
                 debug!("finished");
             }
         }
-        .instrument(debug_span!("usearch", "{id}")),
+        .instrument(debug_span!("usearch", "{key}")),
     );
 
     Ok(tx)
@@ -1079,7 +1079,7 @@ async fn check_memory_allocation(
     msg: &Index,
     memory: &mpsc::Sender<Memory>,
     allocate_prev: &mut Allocate,
-    id: &IndexId,
+    key: &IndexKey,
 ) -> bool {
     if !matches!(msg, Index::Add { .. }) {
         return true;
@@ -1088,7 +1088,7 @@ async fn check_memory_allocation(
     let allocate = memory.can_allocate().await;
     if allocate == Allocate::Cannot {
         if *allocate_prev == Allocate::Can {
-            error!("Unable to add vector for index {id}: not enough memory to reserve more space");
+            error!("Unable to add vector for index {key}: not enough memory to reserve more space");
         }
         *allocate_prev = allocate;
         return false;
@@ -1132,7 +1132,7 @@ mod tests {
     use crate::Connectivity;
     use crate::ExpansionAdd;
     use crate::ExpansionSearch;
-    use crate::IndexId;
+    use crate::IndexKey;
     use crate::index::IndexExt;
     use crate::invariant_key::InvariantKey;
     use crate::memory;
@@ -1203,7 +1203,7 @@ mod tests {
         let actor = factory
             .create_index(
                 IndexConfiguration {
-                    id: IndexId::new(&"vector".to_string().into(), &"store".to_string().into()),
+                    key: IndexKey::new(&"vector".to_string().into(), &"store".to_string().into()),
                     dimensions: NonZeroUsize::new(3).unwrap().into(),
                     connectivity: Connectivity::default(),
                     expansion_add: ExpansionAdd::default(),
@@ -1340,7 +1340,7 @@ mod tests {
         let actor = factory
             .create_index(
                 IndexConfiguration {
-                    id: IndexId::new(&"vector".to_string().into(), &"store".to_string().into()),
+                    key: IndexKey::new(&"vector".to_string().into(), &"store".to_string().into()),
                     dimensions: NonZeroUsize::new(3).unwrap().into(),
                     connectivity: Connectivity::default(),
                     expansion_add: ExpansionAdd::default(),
@@ -1624,7 +1624,7 @@ mod tests {
         let index = factory
             .create_index(
                 IndexConfiguration {
-                    id: IndexId::new(&"vector".to_string().into(), &"store".to_string().into()),
+                    key: IndexKey::new(&"vector".to_string().into(), &"store".to_string().into()),
                     dimensions: dimensions.into(),
                     connectivity: Connectivity::default(),
                     expansion_add: ExpansionAdd::default(),
