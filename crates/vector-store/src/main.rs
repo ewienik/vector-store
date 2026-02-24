@@ -8,6 +8,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use anyhow::anyhow;
 use clap::Parser;
+use std::io::IsTerminal;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
@@ -37,9 +38,13 @@ fn main() -> anyhow::Result<()> {
             "Unable to parse VECTOR_STORE_DISABLE_COLORS env (true/false)"
         )))?;
 
+    // Disable ANSI colors when explicitly requested or when stdout is not a terminal
+    // (e.g. output is redirected to a file)
+    let use_ansi = !disable_colors && std::io::stdout().is_terminal();
+
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().or_else(|_| EnvFilter::try_new("info"))?)
-        .with(fmt::layer().with_target(false).with_ansi(!disable_colors))
+        .with(fmt::layer().with_target(false).with_ansi(use_ansi))
         .init();
 
     rustls::crypto::aws_lc_rs::default_provider()
