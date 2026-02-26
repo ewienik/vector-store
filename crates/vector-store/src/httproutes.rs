@@ -1288,6 +1288,96 @@ mod tests {
             )
             .is_err()
         );
+
+        // type mismatch: string value for Int column
+        assert!(
+            try_from_post_index_ann_filter(
+                serde_json::from_str(
+                    r#"{
+                    "restrictions": [
+                        { "type": "==", "lhs": "pk", "rhs": "hello" }
+                    ],
+                    "allow_filtering": true
+                }"#,
+                )
+                .unwrap(),
+                &primary_key_columns,
+                &table_columns
+            )
+            .is_err()
+        );
+
+        // type mismatch: string value for Int column in tuple restriction
+        assert!(
+            try_from_post_index_ann_filter(
+                serde_json::from_str(
+                    r#"{
+                    "restrictions": [
+                        { "type": "()<()", "lhs": ["pk", "ck"], "rhs": [1, "hello"] }
+                    ],
+                    "allow_filtering": true
+                }"#,
+                )
+                .unwrap(),
+                &primary_key_columns,
+                &table_columns
+            )
+            .is_err()
+        );
+
+        // type mismatch: boolean value for Int column
+        assert!(
+            try_from_post_index_ann_filter(
+                serde_json::from_str(
+                    r#"{
+                    "restrictions": [
+                        { "type": ">", "lhs": "pk", "rhs": true }
+                    ],
+                    "allow_filtering": true
+                }"#,
+                )
+                .unwrap(),
+                &primary_key_columns,
+                &table_columns
+            )
+            .is_err()
+        );
+
+        // type mismatch: string value for Int column in IN restriction
+        assert!(
+            try_from_post_index_ann_filter(
+                serde_json::from_str(
+                    r#"{
+                    "restrictions": [
+                        { "type": "IN", "lhs": "pk", "rhs": ["hello"] }
+                    ],
+                    "allow_filtering": true
+                }"#,
+                )
+                .unwrap(),
+                &primary_key_columns,
+                &table_columns
+            )
+            .is_err()
+        );
+
+        // type mismatch: string value for Int column in ()IN() restriction
+        assert!(
+            try_from_post_index_ann_filter(
+                serde_json::from_str(
+                    r#"{
+                    "restrictions": [
+                        { "type": "()IN()", "lhs": ["pk", "ck"], "rhs": [[1, "hello"]] }
+                    ],
+                    "allow_filtering": true
+                }"#,
+                )
+                .unwrap(),
+                &primary_key_columns,
+                &table_columns
+            )
+            .is_err()
+        );
     }
 
     #[test]
