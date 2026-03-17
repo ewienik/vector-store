@@ -20,7 +20,8 @@ async fn status_is_serving_after_creation() {
             ("pk".to_string().into(), NativeType::Int),
             ("ck".to_string().into(), NativeType::Text),
         ],
-        [],
+        None,
+        None,
     )
     .await;
 
@@ -39,7 +40,8 @@ async fn status_is_bootstrapping_while_discovering_indexes() {
             ("pk".to_string().into(), NativeType::Int),
             ("ck".to_string().into(), NativeType::Text),
         ],
-        [],
+        None,
+        None,
     )
     .await;
     db.simulate_endless_get_indexes_processing();

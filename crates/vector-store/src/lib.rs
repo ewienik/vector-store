@@ -568,7 +568,7 @@ pub struct DbEmbedding {
     pub timestamp: Timestamp,
 }
 
-#[derive(Clone)]
+#[derive(Clone, derive_more::From)]
 /// Marker struct to indicate that an async operation is in progress.
 #[allow(dead_code)]
 pub struct AsyncInProgress(mpsc::Sender<()>);

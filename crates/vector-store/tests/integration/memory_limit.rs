@@ -73,25 +73,17 @@ async fn memory_limit_during_index_build() {
     )
     .unwrap();
 
-    db.add_index(
-        &index.keyspace_name,
-        index.index_name.clone(),
-        index.clone().into(),
-    )
-    .unwrap();
-
     const VECTOR_COUNT: i32 = 1_000_000;
-    db.insert_values(
-        &index.keyspace_name,
-        &index.table_name,
-        &index.target_column,
-        (0..VECTOR_COUNT).map(|i| {
+    db.add_index(
+        index.clone(),
+        Some(db_basic::scan_fn((0..VECTOR_COUNT).map(|i| {
             (
                 [CqlValue::Int(i)].into(),
                 Some(vec![0.0, 0.0, 0.0].into()),
                 Timestamp::from_unix_timestamp(10),
             )
-        }),
+        }))),
+        None,
     )
     .unwrap();
 

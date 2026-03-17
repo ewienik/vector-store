@@ -6,6 +6,7 @@
 use crate::Duration;
 use crate::db_basic;
 use crate::db_basic::DbBasic;
+use crate::db_basic::ScanFn;
 use crate::db_basic::Table;
 use crate::wait_for;
 use crate::wait_for_value;
@@ -30,11 +31,9 @@ use vector_store::ExpansionAdd;
 use vector_store::ExpansionSearch;
 use vector_store::IndexMetadata;
 use vector_store::Percentage;
-use vector_store::PrimaryKey;
 use vector_store::Quantization;
 use vector_store::SpaceType;
 use vector_store::Timestamp;
-use vector_store::Vector;
 use vector_store::httproutes::PostIndexAnnFilter;
 use vector_store::httproutes::PostIndexAnnResponse;
 use vector_store::httproutes::PostIndexAnnRestriction;
@@ -52,7 +51,8 @@ pub(crate) async fn setup_store(
     index_type: DbIndexType,
     primary_keys: impl IntoIterator<Item = ColumnName>,
     columns: impl IntoIterator<Item = (ColumnName, NativeType)>,
-    values: impl IntoIterator<Item = (PrimaryKey, Option<Vector>, Timestamp)>,
+    fullscan_fn: Option<ScanFn>,
+    cdc_fn: Option<ScanFn>,
 ) -> (
     impl std::future::Future<Output = (HttpClient, impl Sized, impl Sized)>,
     IndexMetadata,
@@ -64,19 +64,22 @@ pub(crate) async fn setup_store(
         index_type,
         primary_keys,
         columns,
-        values,
+        fullscan_fn,
+        cdc_fn,
         Quantization::default(),
         NonZeroUsize::new(3).unwrap().into(),
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn setup_store_with_quantization(
     config: Config,
     index_type: DbIndexType,
     primary_keys: impl IntoIterator<Item = ColumnName>,
     columns: impl IntoIterator<Item = (ColumnName, NativeType)>,
-    values: impl IntoIterator<Item = (PrimaryKey, Option<Vector>, Timestamp)>,
+    fullscan_fn: Option<ScanFn>,
+    cdc_fn: Option<ScanFn>,
     quantization: Quantization,
     dimension: Dimensions,
 ) -> (
@@ -120,20 +123,7 @@ pub(crate) async fn setup_store_with_quantization(
     )
     .unwrap();
 
-    db.insert_values(
-        &index.keyspace_name,
-        &index.table_name,
-        &index.target_column,
-        values,
-    )
-    .unwrap();
-
-    db.add_index(
-        &index.keyspace_name,
-        index.index_name.clone(),
-        index.clone().into(),
-    )
-    .unwrap();
+    db.add_index(index.clone(), fullscan_fn, cdc_fn).unwrap();
 
     let (config_tx, config_rx) = watch::channel(Arc::new(config));
     let index_factory = vector_store::new_index_factory_usearch(config_rx.clone()).unwrap();
@@ -157,7 +147,8 @@ pub(crate) async fn setup_store_and_wait_for_index(
     index_type: DbIndexType,
     primary_keys: impl IntoIterator<Item = ColumnName>,
     columns: impl IntoIterator<Item = (ColumnName, NativeType)>,
-    values: impl IntoIterator<Item = (PrimaryKey, Option<Vector>, Timestamp)>,
+    fullscan_fn: Option<ScanFn>,
+    cdc_fn: Option<ScanFn>,
 ) -> (
     IndexMetadata,
     HttpClient,
@@ -165,8 +156,15 @@ pub(crate) async fn setup_store_and_wait_for_index(
     impl Sized,
     Sender<NodeState>,
 ) {
-    let (run, index, db, node_state) =
-        setup_store(test_config(), index_type, primary_keys, columns, values).await;
+    let (run, index, db, node_state) = setup_store(
+        test_config(),
+        index_type,
+        primary_keys,
+        columns,
+        fullscan_fn,
+        cdc_fn,
+    )
+    .await;
     let (client, server, _config_tx) = run.await;
 
     wait_for(
@@ -190,7 +188,7 @@ async fn simple_create_search_delete_index() {
             ("pk".to_string().into(), NativeType::Int),
             ("ck".to_string().into(), NativeType::Text),
         ],
-        [
+        Some(db_basic::scan_fn([
             (
                 [CqlValue::Int(1), CqlValue::Text("one".to_string())].into(),
                 Some(vec![1., 1., 1.].into()),
@@ -206,7 +204,8 @@ async fn simple_create_search_delete_index() {
                 Some(vec![3., 3., 3.].into()),
                 Timestamp::from_unix_timestamp(30),
             ),
-        ],
+        ])),
+        None,
     )
     .await;
     let (client, _server, _config_tx) = run.await;
@@ -314,12 +313,7 @@ async fn failed_db_index_create() {
         },
     )
     .unwrap();
-    db.add_index(
-        &index.keyspace_name,
-        index.index_name.clone(),
-        index.clone().into(),
-    )
-    .unwrap();
+    db.add_index(index.clone(), None, None).unwrap();
 
     wait_for(
         || async { !client.indexes().await.is_empty() },
@@ -327,8 +321,15 @@ async fn failed_db_index_create() {
     )
     .await;
 
-    db.add_index(&index.keyspace_name, "ann2".into(), index.clone().into())
-        .unwrap();
+    db.add_index(
+        IndexMetadata {
+            index_name: "ann2".into(),
+            ..index.clone()
+        },
+        None,
+        None,
+    )
+    .unwrap();
 
     wait_for(
         || async { client.indexes().await.len() == 2 },
@@ -341,8 +342,15 @@ async fn failed_db_index_create() {
     assert!(indexes.contains(&vector_store::IndexInfo::new("vector", "ann")));
     assert!(indexes.contains(&vector_store::IndexInfo::new("vector", "ann2")));
 
-    db.add_index(&index.keyspace_name, "ann3".into(), index.clone().into())
-        .unwrap();
+    db.add_index(
+        IndexMetadata {
+            index_name: "ann3".into(),
+            ..index.clone()
+        },
+        None,
+        None,
+    )
+    .unwrap();
 
     wait_for(
         || async { client.indexes().await.len() == 3 },
@@ -380,11 +388,12 @@ async fn ann_returns_bad_request_when_provided_vector_size_is_not_eq_index_dimen
             ("pk".to_string().into(), NativeType::Int),
             ("ck".to_string().into(), NativeType::Text),
         ],
-        [(
+        Some(db_basic::scan_fn([(
             [CqlValue::Int(1), CqlValue::Text("one".to_string())].into(),
             Some(vec![1., 1., 1.].into()),
             Timestamp::from_unix_timestamp(10),
-        )],
+        )])),
+        None,
     )
     .await;
 
@@ -412,7 +421,8 @@ async fn ann_fail_while_building() {
             ("pk".to_string().into(), NativeType::Int),
             ("ck".to_string().into(), NativeType::Text),
         ],
-        [],
+        None,
+        None,
     )
     .await;
     db.set_next_full_scan_progress(vector_store::Progress::InProgress(
@@ -444,11 +454,12 @@ async fn ann_failed_when_wrong_number_of_primary_keys() {
         DbIndexType::Global,
         vec!["pk".into()],
         [("pk".into(), NativeType::Int)],
-        [(
+        Some(db_basic::scan_fn([(
             [CqlValue::Int(1), CqlValue::Text("one".to_string())].into(),
             Some(vec![1., 1., 1.].into()),
             Timestamp::from_unix_timestamp(10),
-        )],
+        )])),
+        None,
     )
     .await;
 
@@ -491,13 +502,14 @@ async fn ann_filter_partition_key_int_eq() {
             (pk_column.clone(), NativeType::Int),
             (ck_column.clone(), NativeType::Int),
         ],
-        (0..30).map(|i| {
+        Some(db_basic::scan_fn((0..30).map(|i| {
             (
                 [CqlValue::Int(i / 10), CqlValue::Int(i % 10)].into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
                 Timestamp::from_unix_timestamp(10),
             )
-        }),
+        }))),
+        None,
     )
     .await;
 
@@ -559,13 +571,14 @@ async fn ann_filter_clustering_key_int_eq() {
             (pk_column.clone(), NativeType::Int),
             (ck_column.clone(), NativeType::Int),
         ],
-        (0..30).map(|i| {
+        Some(db_basic::scan_fn((0..30).map(|i| {
             (
                 [CqlValue::Int(i / 10), CqlValue::Int(i % 10)].into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
                 Timestamp::from_unix_timestamp(10),
             )
-        }),
+        }))),
+        None,
     )
     .await;
 
@@ -627,13 +640,14 @@ async fn ann_filter_partition_key_int_in() {
             (pk_column.clone(), NativeType::Int),
             (ck_column.clone(), NativeType::Int),
         ],
-        (0..30).map(|i| {
+        Some(db_basic::scan_fn((0..30).map(|i| {
             (
                 [CqlValue::Int(i / 10), CqlValue::Int(i % 10)].into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
                 Timestamp::from_unix_timestamp(10),
             )
-        }),
+        }))),
+        None,
     )
     .await;
 
@@ -699,13 +713,14 @@ async fn ann_filter_clustering_key_int_in() {
             (pk_column.clone(), NativeType::Int),
             (ck_column.clone(), NativeType::Int),
         ],
-        (0..30).map(|i| {
+        Some(db_basic::scan_fn((0..30).map(|i| {
             (
                 [CqlValue::Int(i / 10), CqlValue::Int(i % 10)].into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
                 Timestamp::from_unix_timestamp(10),
             )
-        }),
+        }))),
+        None,
     )
     .await;
 
@@ -771,13 +786,14 @@ async fn ann_filter_primary_key_int_eq_tuple() {
             (pk_column.clone(), NativeType::Int),
             (ck_column.clone(), NativeType::Int),
         ],
-        (0..30).map(|i| {
+        Some(db_basic::scan_fn((0..30).map(|i| {
             (
                 [CqlValue::Int(i / 10), CqlValue::Int(i % 10)].into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
                 Timestamp::from_unix_timestamp(10),
             )
-        }),
+        }))),
+        None,
     )
     .await;
 
@@ -811,13 +827,14 @@ async fn ann_filter_primary_key_int_in_tuple() {
             (pk_column.clone(), NativeType::Int),
             (ck_column.clone(), NativeType::Int),
         ],
-        (0..30).map(|i| {
+        Some(db_basic::scan_fn((0..30).map(|i| {
             (
                 [CqlValue::Int(i / 10), CqlValue::Int(i % 10)].into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
                 Timestamp::from_unix_timestamp(10),
             )
-        }),
+        }))),
+        None,
     )
     .await;
 
@@ -857,13 +874,14 @@ async fn setup_int_int_store() -> (
             (pk_column.clone(), NativeType::Int),
             (ck_column.clone(), NativeType::Int),
         ],
-        (0..30).map(|i| {
+        Some(db_basic::scan_fn((0..30).map(|i| {
             (
                 [CqlValue::Int(i / 10), CqlValue::Int(i % 10)].into(),
                 Some(vec![i as f32, i as f32, i as f32].into()),
                 Timestamp::from_unix_timestamp(10),
             )
-        }),
+        }))),
+        None,
     )
     .await;
     (index, client, pk_column, ck_column, db, server, node_state)
@@ -1321,13 +1339,16 @@ async fn ann_filter_partition_key_text_gt() {
             (pk_column.clone(), NativeType::Text),
             (ck_column.clone(), NativeType::Int),
         ],
-        ["a", "b", "c", "d", "e"].iter().enumerate().map(|(i, pk)| {
-            (
-                [CqlValue::Text(pk.to_string()), CqlValue::Int(i as i32)].into(),
-                Some(vec![i as f32, i as f32, i as f32].into()),
-                Timestamp::from_unix_timestamp(10),
-            )
-        }),
+        Some(db_basic::scan_fn(
+            ["a", "b", "c", "d", "e"].iter().enumerate().map(|(i, pk)| {
+                (
+                    [CqlValue::Text(pk.to_string()), CqlValue::Int(i as i32)].into(),
+                    Some(vec![i as f32, i as f32, i as f32].into()),
+                    Timestamp::from_unix_timestamp(10),
+                )
+            }),
+        )),
+        None,
     )
     .await;
 
@@ -1402,11 +1423,12 @@ async fn http_server_is_responsive_when_index_add_hangs() {
             ("pk".to_string().into(), NativeType::Int),
             ("ck".to_string().into(), NativeType::Text),
         ],
-        [(
+        Some(db_basic::scan_fn([(
             [CqlValue::Int(1), CqlValue::Text("one".to_string())].into(),
             Some(vec![1., 1., 1.].into()),
             Timestamp::from_unix_timestamp(10),
-        )],
+        )])),
+        None,
     )
     .await;
 
@@ -1430,7 +1452,7 @@ async fn null_vector_is_not_indexed() {
         DbIndexType::Global,
         ["pk".into()],
         [("pk".to_string().into(), NativeType::Int)],
-        [
+        Some(db_basic::scan_fn([
             (
                 [CqlValue::Int(1)].into(),
                 Some(vec![1., 1., 1.].into()),
@@ -1441,7 +1463,8 @@ async fn null_vector_is_not_indexed() {
                 None,
                 Timestamp::from_unix_timestamp(20),
             ),
-        ],
+        ])),
+        None,
     )
     .await;
     let (client, _server, _config_tx) = run.await;

@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
+use crate::db_basic;
 use crate::usearch::setup_store_with_quantization;
 use crate::usearch::test_config;
 use crate::wait_for;
@@ -48,6 +49,7 @@ async fn quantization_is_effectively_applied() {
             Some(add_vector.into()),
             Timestamp::from_unix_timestamp(10),
         )];
+        let values_len = values.len();
         let (run, index, _db, _node_state) = setup_store_with_quantization(
             test_config(),
             DbIndexType::Global,
@@ -56,7 +58,8 @@ async fn quantization_is_effectively_applied() {
                 "pk".to_string().into(),
                 scylla::cluster::metadata::NativeType::Int,
             )],
-            values.to_vec(),
+            Some(db_basic::scan_fn(values)),
+            None,
             quantization,
             NonZeroUsize::new(3).unwrap().into(),
         )
@@ -67,7 +70,7 @@ async fn quantization_is_effectively_applied() {
                 client
                     .index_status(&index.keyspace_name, &index.index_name)
                     .await
-                    .is_ok_and(|s| s.count == values.len())
+                    .is_ok_and(|s| s.count == values_len)
             },
             &format!("Waiting for 1 vector to be indexed ({:?})", quantization),
         )
@@ -133,7 +136,8 @@ async fn quantization_is_returned_as_index_data_type() {
             DbIndexType::Global,
             [],
             [],
-            [],
+            None,
+            None,
             quantization,
             NonZeroUsize::new(3).unwrap().into(),
         )
@@ -175,7 +179,8 @@ async fn search_with_quantization(quantization: Quantization, filter: Option<Pos
             pk_column.clone(),
             scylla::cluster::metadata::NativeType::Int,
         )],
-        vectors,
+        Some(db_basic::scan_fn(vectors)),
+        None,
         quantization,
         NonZeroUsize::new(DIMENSIONS).unwrap().into(),
     )
@@ -278,7 +283,8 @@ async fn binary_quantization_with_non_divisible_by_8_dimensions() {
             pk_column.clone(),
             scylla::cluster::metadata::NativeType::Int,
         )],
-        vectors,
+        Some(db_basic::scan_fn(vectors)),
+        None,
         Quantization::B1,
         NonZeroUsize::new(DIMENSIONS).unwrap().into(),
     )

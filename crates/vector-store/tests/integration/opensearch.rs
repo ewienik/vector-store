@@ -76,16 +76,8 @@ async fn simple_create_search_delete_index() {
     )
     .unwrap();
     db.add_index(
-        &index.keyspace_name,
-        index.index_name.clone(),
-        index.clone().into(),
-    )
-    .unwrap();
-    db.insert_values(
-        &index.keyspace_name,
-        &index.table_name,
-        &index.target_column,
-        vec![
+        index.clone(),
+        Some(db_basic::scan_fn([
             (
                 [CqlValue::Int(1), CqlValue::Text("one".to_string())].into(),
                 Some(vec![1., 1., 1.].into()),
@@ -101,7 +93,8 @@ async fn simple_create_search_delete_index() {
                 Some(vec![3., 3., 3.].into()),
                 Timestamp::from_unix_timestamp(30),
             ),
-        ],
+        ])),
+        None,
     )
     .unwrap();
 
