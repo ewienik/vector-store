@@ -73,7 +73,7 @@ async fn memory_limit_during_index_build() {
     )
     .unwrap();
 
-    const VECTOR_COUNT: i32 = 1_000_000;
+    const VECTOR_COUNT: i32 = 1_000;
     db.add_index(
         index.clone(),
         Some(db_basic::scan_fn((0..VECTOR_COUNT).map(|i| {

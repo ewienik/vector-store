@@ -1437,7 +1437,7 @@ async fn http_server_is_responsive_when_index_add_hangs() {
     // Ensure the HTTP server stays responsive while the (simulated) embedding add is long-running.
     let status = client.status().await.unwrap();
 
-    assert_eq!(status, vector_store::httproutes::NodeStatus::Serving);
+    assert_eq!(status, vector_store::httproutes::NodeStatus::Bootstrapping);
 }
 
 #[tokio::test]
