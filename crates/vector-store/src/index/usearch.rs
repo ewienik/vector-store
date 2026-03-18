@@ -43,8 +43,8 @@ use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tracing::Instrument;
 use tracing::debug;
-use tracing::debug_span;
 use tracing::error;
+use tracing::error_span;
 use tracing::info;
 use tracing::trace;
 use tracing::warn;
@@ -301,7 +301,7 @@ impl Simulator {
                     }
                 }
             }
-            .instrument(debug_span!("simulator", "{}", key)),
+            .instrument(error_span!("simulator", "{}", key)),
         );
 
         sim
@@ -730,7 +730,7 @@ fn new<I: UsearchIndex + Send + Sync + 'static>(
                 debug!("finished");
             }
         }
-        .instrument(debug_span!("usearch", "{index_key}")),
+        .instrument(error_span!("usearch", "{index_key}")),
     );
 
     Ok(tx)

@@ -18,8 +18,8 @@ use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tracing::Instrument;
 use tracing::debug;
-use tracing::debug_span;
 use tracing::error;
+use tracing::error_span;
 
 pub(crate) enum MonitorItems {}
 
@@ -53,7 +53,7 @@ pub(crate) async fn new(
 
             debug!("finished");
         }
-        .instrument(debug_span!("monitor items", "{key_for_span}")),
+        .instrument(error_span!("monitor items", "{key_for_span}")),
     );
     Ok(tx)
 }
