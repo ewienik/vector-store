@@ -22,6 +22,7 @@ axum-server-dual-protocol = "0.7.0"
 bcrypt = "0.15"
 clap = { version = "4.5.40", features = ["derive"] }
 chrono = "0.4.43"
+dashmap = "6.1.0"
 derive_more = { version = "2.0.1", features = ["full"] }
 dotenvy = "0.15.7"
 futures = "0.3.31"

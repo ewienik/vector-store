@@ -27,7 +27,7 @@ axum-server.workspace = true
 axum-server-dual-protocol.workspace = true
 clap.workspace = true
 chrono.workspace = true
-dashmap = "6.1.0"
+dashmap.workspace = true
 derive_more.workspace = true
 dotenvy.workspace = true
 futures.workspace = true
@@ -35,7 +35,6 @@ humantime.workspace = true
 itertools.workspace = true
 macros.workspace = true
 mimalloc.workspace = true
-ntest.workspace = true
 rustls.workspace = true
 rustls-pki-types.workspace = true
 opensearch.workspace = true
@@ -64,6 +63,7 @@ rayon.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true
+ntest.workspace = true
 reqwest.workspace = true
 httpclient.workspace = true
 tempfile.workspace = true
