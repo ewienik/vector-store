@@ -26,6 +26,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::WeakSender;
 use tokio::time;
 use tracing::Instrument;
 use tracing::debug;
@@ -37,7 +38,7 @@ pub(crate) enum MonitorIndexes {}
 
 pub(crate) async fn new(
     db: Sender<Db>,
-    engine: Sender<Engine>,
+    engine: WeakSender<Engine>,
     node_state: Sender<NodeState>,
 ) -> anyhow::Result<Sender<MonitorIndexes>> {
     let (tx, mut rx) = mpsc::channel(10);
@@ -51,6 +52,10 @@ pub(crate) async fn new(
             while !rx.is_closed() {
                 tokio::select! {
                     _ = interval.tick() => {
+                        let Some(engine) = engine.upgrade() else {
+                            break;
+                        };
+
                         // check if schema has changed from the last time
                         if !schema_version.has_changed(&db).await {
                             continue;
@@ -504,7 +509,7 @@ mod tests {
         let (tx_ns, _rx_ns) = mpsc::channel(10);
 
         // Start the monitor
-        let _monitor = new(tx_db.clone(), tx_eng.clone(), tx_ns.clone())
+        let _monitor = new(tx_db.clone(), tx_eng.downgrade(), tx_ns.clone())
             .await
             .unwrap();
 

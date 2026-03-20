@@ -96,15 +96,15 @@ pub(crate) fn new(mut config_rx: watch::Receiver<Arc<Config>>) -> mpsc::Sender<M
                     allocate = can_allocate(used_memory(&system_info), memory_limit, allocate);
                 }
 
-                Some(msg) =  rx.recv() => {
+                msg = rx.recv() => {
+                    let Some(msg) = msg else {
+                        break;
+                    };
                     match msg {
                         Memory::CanAllocate { tx } => {
                             tx.send(allocate).unwrap_or_else(|_| trace!("can_allocate: unable to send response"));
                         }
                     }
-                }
-                else => {
-                    break;
                 }
             }
         }

@@ -431,7 +431,9 @@ impl UsearchIndex for RwLock<Simulator> {
         self.search(vector, limit)
     }
 
-    fn stop(&self) {}
+    fn stop(&self) {
+        self.read().unwrap().notify.notify_one();
+    }
 }
 
 // Initial and incremental number for the index vectors reservation.

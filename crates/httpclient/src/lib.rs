@@ -25,6 +25,7 @@ use vector_store::httproutes::PostIndexAnnFilter;
 use vector_store::httproutes::PostIndexAnnRequest;
 use vector_store::httproutes::PostIndexAnnResponse;
 
+#[derive(Debug, Clone)]
 pub struct HttpClient {
     client: Client,
     url_api: String,

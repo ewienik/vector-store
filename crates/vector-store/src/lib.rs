@@ -421,6 +421,7 @@ impl Vector {
 
 #[derive(
     Clone,
+    Copy,
     serde::Serialize,
     serde::Deserialize,
     derive_more::AsRef,
