@@ -18,7 +18,7 @@ use tokio::sync::oneshot;
 pub(crate) type AnnR = anyhow::Result<(Vec<PrimaryKey>, Vec<Distance>)>;
 pub(crate) type CountR = anyhow::Result<usize>;
 
-pub enum Index {
+pub enum IndexModify {
     AddVector {
         partition_id: PartitionId,
         primary_id: PrimaryId,
@@ -33,6 +33,9 @@ pub enum Index {
     RemovePartition {
         partition_id: PartitionId,
     },
+}
+
+pub enum IndexSearch {
     Ann {
         index_key: IndexKey,
         embedding: Vector,
@@ -52,7 +55,12 @@ pub enum Index {
     },
 }
 
-pub(crate) trait IndexExt {
+pub(crate) enum Index {
+    Modify(IndexModify),
+    Search(IndexSearch),
+}
+
+pub(crate) trait IndexModifyExt {
     async fn add_vector(
         &self,
         partition_id: PartitionId,
@@ -67,6 +75,9 @@ pub(crate) trait IndexExt {
         in_progress: Option<AsyncInProgress>,
     );
     async fn remove_partition(&self, partition_id: PartitionId);
+}
+
+pub(crate) trait IndexSearchExt {
     async fn ann(&self, index_key: IndexKey, embedding: Vector, limit: Limit) -> AnnR;
     async fn filtered_ann(
         &self,
@@ -78,7 +89,7 @@ pub(crate) trait IndexExt {
     async fn count(&self, index_key: IndexKey) -> CountR;
 }
 
-impl IndexExt for mpsc::Sender<Index> {
+impl IndexModifyExt for mpsc::Sender<IndexModify> {
     async fn add_vector(
         &self,
         partition_id: PartitionId,
@@ -86,7 +97,7 @@ impl IndexExt for mpsc::Sender<Index> {
         embedding: Vector,
         in_progress: Option<AsyncInProgress>,
     ) {
-        self.send(Index::AddVector {
+        self.send(IndexModify::AddVector {
             partition_id,
             primary_id,
             embedding,
@@ -102,7 +113,7 @@ impl IndexExt for mpsc::Sender<Index> {
         primary_id: PrimaryId,
         in_progress: Option<AsyncInProgress>,
     ) {
-        self.send(Index::RemoveVector {
+        self.send(IndexModify::RemoveVector {
             partition_id,
             primary_id,
             in_progress,
@@ -112,14 +123,16 @@ impl IndexExt for mpsc::Sender<Index> {
     }
 
     async fn remove_partition(&self, partition_id: PartitionId) {
-        self.send(Index::RemovePartition { partition_id })
+        self.send(IndexModify::RemovePartition { partition_id })
             .await
             .expect("internal actor should receive request");
     }
+}
 
+impl IndexSearchExt for mpsc::Sender<IndexSearch> {
     async fn ann(&self, index_key: IndexKey, embedding: Vector, limit: Limit) -> AnnR {
         let (tx, rx) = oneshot::channel();
-        self.send(Index::Ann {
+        self.send(IndexSearch::Ann {
             index_key,
             embedding,
             limit,
@@ -137,7 +150,7 @@ impl IndexExt for mpsc::Sender<Index> {
         limit: Limit,
     ) -> AnnR {
         let (tx, rx) = oneshot::channel();
-        self.send(Index::FilteredAnn {
+        self.send(IndexSearch::FilteredAnn {
             index_key,
             embedding,
             filter,
@@ -150,7 +163,7 @@ impl IndexExt for mpsc::Sender<Index> {
 
     async fn count(&self, index_key: IndexKey) -> CountR {
         let (tx, rx) = oneshot::channel();
-        self.send(Index::Count { index_key, tx }).await?;
+        self.send(IndexSearch::Count { index_key, tx }).await?;
         rx.await?
     }
 }

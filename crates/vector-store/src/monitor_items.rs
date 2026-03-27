@@ -7,8 +7,8 @@ use crate::AsyncInProgress;
 use crate::DbEmbedding;
 use crate::IndexKey;
 use crate::Metrics;
-use crate::index::Index;
-use crate::index::IndexExt;
+use crate::index::IndexModify;
+use crate::index::IndexModifyExt;
 use crate::table::Operation;
 use crate::table::TableAdd;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ pub(crate) async fn new(
     key: IndexKey,
     table: Arc<RwLock<impl TableAdd + Send + Sync + 'static>>,
     mut embeddings: Receiver<(DbEmbedding, Option<AsyncInProgress>)>,
-    index: Sender<Index>,
+    index: Sender<IndexModify>,
     metrics: Arc<Metrics>,
 ) -> anyhow::Result<Sender<MonitorItems>> {
     // The value was taken from initial benchmarks
@@ -60,7 +60,7 @@ pub(crate) async fn new(
 
 async fn add(
     table: &Arc<RwLock<impl TableAdd>>,
-    index: &Sender<Index>,
+    index: &Sender<IndexModify>,
     embedding: DbEmbedding,
     mut in_progress: Option<AsyncInProgress>,
     metrics: &Metrics,
@@ -232,7 +232,7 @@ mod tests {
             .send((embedding, Some(AsyncInProgress(tx_progress))))
             .await
             .unwrap();
-        let Index::AddVector {
+        let IndexModify::AddVector {
             primary_id,
             partition_id,
             embedding,
@@ -288,7 +288,7 @@ mod tests {
                 }])
             });
         tx_embeddings.send((embedding, None)).await.unwrap();
-        let Some(Index::AddVector {
+        let Some(IndexModify::AddVector {
             partition_id,
             primary_id,
             embedding,
@@ -351,7 +351,7 @@ mod tests {
             });
         tx_embeddings.send((embedding, None)).await.unwrap();
 
-        let Some(Index::RemoveVector {
+        let Some(IndexModify::RemoveVector {
             partition_id,
             primary_id,
             in_progress: None,
@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(primary_id, 2.into());
         assert_eq!(partition_id, 3.into());
 
-        let Some(Index::AddVector {
+        let Some(IndexModify::AddVector {
             partition_id,
             primary_id,
             embedding,
@@ -433,7 +433,7 @@ mod tests {
         tx_embeddings.send((embedding, None)).await.unwrap();
 
         // First: plain insert
-        let Some(Index::AddVector {
+        let Some(IndexModify::AddVector {
             partition_id,
             primary_id,
             embedding,
@@ -448,7 +448,7 @@ mod tests {
         assert!(in_progress.is_none());
 
         // Second: remove half of the update
-        let Some(Index::RemoveVector {
+        let Some(IndexModify::RemoveVector {
             partition_id,
             primary_id,
             in_progress: None,
@@ -460,7 +460,7 @@ mod tests {
         assert_eq!(partition_id, 4.into());
 
         // Third: add half of the update
-        let Some(Index::AddVector {
+        let Some(IndexModify::AddVector {
             partition_id,
             primary_id,
             embedding,
@@ -514,7 +514,7 @@ mod tests {
             });
         tx_embeddings.send((embedding, None)).await.unwrap();
 
-        let Some(Index::RemoveVector {
+        let Some(IndexModify::RemoveVector {
             partition_id,
             primary_id,
             in_progress: None,
@@ -565,7 +565,7 @@ mod tests {
             });
         tx_embeddings.send((embedding, None)).await.unwrap();
 
-        let Some(Index::RemovePartition { partition_id }) = rx_index.recv().await else {
+        let Some(IndexModify::RemovePartition { partition_id }) = rx_index.recv().await else {
             unreachable!();
         };
         assert_eq!(partition_id, 6.into());

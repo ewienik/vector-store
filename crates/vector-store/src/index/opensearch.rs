@@ -15,6 +15,8 @@ use crate::PartitionId;
 use crate::SpaceType;
 use crate::Vector;
 use crate::index::actor::Index;
+use crate::index::actor::IndexModify;
+use crate::index::actor::IndexSearch;
 use crate::index::factory::IndexConfiguration;
 use crate::index::validator;
 use crate::memory::Memory;
@@ -89,7 +91,7 @@ impl IndexFactory for OpenSearchIndexFactory {
         index: IndexConfiguration,
         table: Arc<RwLock<Table>>,
         _: mpsc::Sender<Memory>,
-    ) -> anyhow::Result<mpsc::Sender<Index>> {
+    ) -> anyhow::Result<(mpsc::Sender<IndexModify>, mpsc::Sender<IndexSearch>)> {
         new(
             index.key,
             index.dimensions,
@@ -217,11 +219,12 @@ pub fn new(
     space_type: SpaceType,
     table: Arc<RwLock<impl TableSearch + Send + Sync + 'static>>,
     client: Arc<OpenSearch>,
-) -> anyhow::Result<mpsc::Sender<Index>> {
+) -> anyhow::Result<(mpsc::Sender<IndexModify>, mpsc::Sender<IndexSearch>)> {
     info!("Creating new index with key: {key}");
     // TODO: The value of channel size was taken from initial benchmarks. Needs more testing
     const CHANNEL_SIZE: usize = 10;
-    let (tx, mut rx) = mpsc::channel(CHANNEL_SIZE);
+    let (tx_modify, mut rx_modify) = mpsc::channel(CHANNEL_SIZE);
+    let (tx_search, mut rx_search) = mpsc::channel(CHANNEL_SIZE);
 
     tokio::spawn({
         let cloned_key = key.clone();
@@ -252,7 +255,21 @@ pub fn new(
 
             let key = Arc::new(key);
 
-            while let Some(msg) = rx.recv().await {
+            loop {
+                let msg = tokio::select! {
+                    msg = rx_modify.recv() => {
+                        let Some(msg) = msg else {
+                            break;
+                        };
+                        Index::Modify(msg)
+                    }
+                    msg = rx_search.recv() => {
+                        let Some(msg) = msg else {
+                            break;
+                        };
+                        Index::Search(msg)
+                    }
+                };
                 let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
                 tokio::spawn({
                     let key = Arc::clone(&key);
@@ -270,7 +287,7 @@ pub fn new(
         .instrument(debug_span!("opensearch", "{cloned_key}"))
     });
 
-    Ok(tx)
+    Ok((tx_modify, tx_search))
 }
 
 async fn process(
@@ -282,30 +299,30 @@ async fn process(
     client: Arc<OpenSearch>,
 ) {
     match msg {
-        Index::AddVector {
+        Index::Modify(IndexModify::AddVector {
             primary_id,
             embedding,
             in_progress: _in_progress,
             ..
-        } => add(index_key, primary_id, &embedding, client).await,
-        Index::RemoveVector {
+        }) => add(index_key, primary_id, &embedding, client).await,
+        Index::Modify(IndexModify::RemoveVector {
             primary_id,
             in_progress: _in_progress,
             ..
-        } => remove(index_key, primary_id, client).await,
-        Index::Ann {
+        }) => remove(index_key, primary_id, client).await,
+        Index::Search(IndexSearch::Ann {
             embedding,
             limit,
             tx,
             ..
-        } => {
+        }) => {
             ann(
                 index_key, tx, embedding, dimensions, limit, space_type, table, client,
             )
             .await
         }
-        Index::FilteredAnn { tx, .. } => filtered_ann(tx).await,
-        Index::Count { tx, .. } => count(index_key, tx, client).await,
+        Index::Search(IndexSearch::FilteredAnn { tx, .. }) => filtered_ann(tx).await,
+        Index::Search(IndexSearch::Count { tx, .. }) => count(index_key, tx, client).await,
 
         _ => todo!(),
     }

@@ -15,6 +15,8 @@ use crate::SpaceType;
 use crate::Vector;
 use crate::index::actor::AnnR;
 use crate::index::actor::Index;
+use crate::index::actor::IndexModify;
+use crate::index::actor::IndexSearch;
 use crate::index::factory::IndexConfiguration;
 use crate::index::validator;
 use crate::memory::Allocate;
@@ -65,7 +67,7 @@ impl IndexFactory for UsearchIndexFactory {
         index: IndexConfiguration,
         table: Arc<RwLock<Table>>,
         memory: mpsc::Sender<Memory>,
-    ) -> anyhow::Result<mpsc::Sender<Index>> {
+    ) -> anyhow::Result<(mpsc::Sender<IndexModify>, mpsc::Sender<IndexSearch>)> {
         match &self.mode {
             Mode::Usearch => {
                 let options = IndexOptions {
@@ -517,6 +519,8 @@ impl From<Quantization> for ScalarKind {
 
 mod operation {
     use super::Index;
+    use super::IndexModify;
+    use super::IndexSearch;
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
@@ -533,11 +537,12 @@ mod operation {
     impl From<&Index> for Mode {
         fn from(msg: &Index) -> Self {
             match msg {
-                Index::AddVector { .. } => Mode::Insert,
-                Index::RemoveVector { .. } => Mode::Remove,
-                Index::Ann { .. } | Index::FilteredAnn { .. } => Mode::Search,
-                Index::RemovePartition { .. } => todo!(),
-                Index::Count { .. } => unreachable!(),
+                Index::Modify(IndexModify::AddVector { .. }) => Mode::Insert,
+                Index::Modify(IndexModify::RemoveVector { .. }) => Mode::Remove,
+                Index::Modify(IndexModify::RemovePartition { .. }) => todo!(),
+                Index::Search(IndexSearch::Ann { .. }) => Mode::Search,
+                Index::Search(IndexSearch::FilteredAnn { .. }) => Mode::Search,
+                Index::Search(IndexSearch::Count { .. }) => unreachable!(),
             }
         }
     }
@@ -678,12 +683,13 @@ fn new<I: UsearchIndex + Send + Sync + 'static>(
     table: Arc<RwLock<impl TableSearch + Send + Sync + 'static>>,
     cpu_semaphore: Arc<Semaphore>,
     memory: mpsc::Sender<Memory>,
-) -> anyhow::Result<mpsc::Sender<Index>> {
+) -> anyhow::Result<(mpsc::Sender<IndexModify>, mpsc::Sender<IndexSearch>)> {
     // The factor can be equal to number of operations
     //const BUFFER_FACTOR_MULTIPLY: usize = 1;
     //let buffer_size = Handle::current().metrics().num_workers() * BUFFER_FACTOR_MULTIPLY;
     let buffer_size = std::env::var("BUFFER_SIZE").unwrap().parse().unwrap();
-    let (tx, mut rx) = mpsc::channel(buffer_size);
+    let (tx_modify, mut rx_modify) = mpsc::channel(buffer_size);
+    let (tx_search, mut rx_search) = mpsc::channel(buffer_size);
 
     tokio::spawn(
         {
@@ -696,8 +702,22 @@ fn new<I: UsearchIndex + Send + Sync + 'static>(
                 let mut allocate_prev = Allocate::Can;
 
                 let mut buffer = Vec::with_capacity(buffer_size);
-                while let Some(msg) = rx.recv().await {
-                    fill_and_sort_buffer(&mut buffer, msg, &mut rx);
+                loop {
+                    let msg = tokio::select! {
+                        msg = rx_modify.recv() => {
+                            let Some(msg) = msg else {
+                                break;
+                            };
+                            Index::Modify(msg)
+                        }
+                        msg = rx_search.recv() => {
+                            let Some(msg) = msg else {
+                                break;
+                            };
+                            Index::Search(msg)
+                        }
+                    };
+                    fill_and_sort_buffer(&mut buffer, msg, &mut rx_modify, &mut rx_search);
                     for msg in buffer.drain(..) {
                         if !check_memory_allocation(&msg, &memory, &mut allocate_prev, &index_key)
                             .await
@@ -730,59 +750,64 @@ fn new<I: UsearchIndex + Send + Sync + 'static>(
         .instrument(error_span!("usearch", "{index_key}")),
     );
 
-    Ok(tx)
+    Ok((tx_modify, tx_search))
 }
 
-fn fill_and_sort_buffer(buffer: &mut Vec<Index>, msg: Index, rx: &mut mpsc::Receiver<Index>) {
+fn fill_and_sort_buffer(
+    buffer: &mut Vec<Index>,
+    msg: Index,
+    rx_modify: &mut mpsc::Receiver<IndexModify>,
+    rx_search: &mut mpsc::Receiver<IndexSearch>,
+) {
     use std::cmp::Ordering;
 
     buffer.clear();
     buffer.push(msg);
-    while let Ok(msg) = rx.try_recv() {
-        buffer.push(msg);
+    while let Ok(msg) = rx_search.try_recv() {
+        buffer.push(Index::Search(msg));
+    }
+    while let Ok(msg) = rx_modify.try_recv() {
+        buffer.push(Index::Modify(msg));
     }
     buffer.sort_by(|lhs, rhs| match (lhs, rhs) {
-        (Index::Ann { .. }, Index::Ann { .. }) => Ordering::Equal,
-        (Index::Ann { .. }, Index::FilteredAnn { .. }) => Ordering::Less,
-        (Index::Ann { .. }, Index::Count { .. }) => Ordering::Less,
-        (Index::Ann { .. }, Index::AddVector { .. }) => Ordering::Less,
-        (Index::Ann { .. }, Index::RemoveVector { .. }) => Ordering::Less,
-        (Index::Ann { .. }, Index::RemovePartition { .. }) => Ordering::Less,
+        (Index::Search(_), Index::Modify(_)) => Ordering::Less,
+        (Index::Modify(_), Index::Search(_)) => Ordering::Greater,
 
-        (Index::FilteredAnn { .. }, Index::Ann { .. }) => Ordering::Greater,
-        (Index::FilteredAnn { .. }, Index::FilteredAnn { .. }) => Ordering::Equal,
-        (Index::FilteredAnn { .. }, Index::Count { .. }) => Ordering::Less,
-        (Index::FilteredAnn { .. }, Index::AddVector { .. }) => Ordering::Less,
-        (Index::FilteredAnn { .. }, Index::RemoveVector { .. }) => std::cmp::Ordering::Less,
-        (Index::FilteredAnn { .. }, Index::RemovePartition { .. }) => std::cmp::Ordering::Less,
+        (Index::Search(lhs), Index::Search(rhs)) => match (lhs, rhs) {
+            (IndexSearch::Ann { .. }, IndexSearch::Ann { .. }) => Ordering::Equal,
+            (IndexSearch::Ann { .. }, IndexSearch::FilteredAnn { .. }) => Ordering::Less,
+            (IndexSearch::Ann { .. }, IndexSearch::Count { .. }) => Ordering::Less,
 
-        (Index::Count { .. }, Index::Ann { .. }) => Ordering::Greater,
-        (Index::Count { .. }, Index::FilteredAnn { .. }) => Ordering::Greater,
-        (Index::Count { .. }, Index::Count { .. }) => Ordering::Equal,
-        (Index::Count { .. }, Index::AddVector { .. }) => Ordering::Less,
-        (Index::Count { .. }, Index::RemoveVector { .. }) => Ordering::Less,
-        (Index::Count { .. }, Index::RemovePartition { .. }) => Ordering::Less,
+            (IndexSearch::FilteredAnn { .. }, IndexSearch::Ann { .. }) => Ordering::Greater,
+            (IndexSearch::FilteredAnn { .. }, IndexSearch::FilteredAnn { .. }) => Ordering::Equal,
+            (IndexSearch::FilteredAnn { .. }, IndexSearch::Count { .. }) => Ordering::Less,
 
-        (Index::AddVector { .. }, Index::Ann { .. }) => Ordering::Greater,
-        (Index::AddVector { .. }, Index::FilteredAnn { .. }) => Ordering::Greater,
-        (Index::AddVector { .. }, Index::Count { .. }) => Ordering::Greater,
-        (Index::AddVector { .. }, Index::AddVector { .. }) => Ordering::Equal,
-        (Index::AddVector { .. }, Index::RemoveVector { .. }) => Ordering::Less,
-        (Index::AddVector { .. }, Index::RemovePartition { .. }) => Ordering::Less,
+            (IndexSearch::Count { .. }, IndexSearch::Ann { .. }) => Ordering::Greater,
+            (IndexSearch::Count { .. }, IndexSearch::FilteredAnn { .. }) => Ordering::Greater,
+            (IndexSearch::Count { .. }, IndexSearch::Count { .. }) => Ordering::Equal,
+        },
 
-        (Index::RemoveVector { .. }, Index::Ann { .. }) => Ordering::Greater,
-        (Index::RemoveVector { .. }, Index::FilteredAnn { .. }) => Ordering::Greater,
-        (Index::RemoveVector { .. }, Index::Count { .. }) => Ordering::Greater,
-        (Index::RemoveVector { .. }, Index::AddVector { .. }) => Ordering::Greater,
-        (Index::RemoveVector { .. }, Index::RemoveVector { .. }) => Ordering::Equal,
-        (Index::RemoveVector { .. }, Index::RemovePartition { .. }) => Ordering::Less,
+        (Index::Modify(lhs), Index::Modify(rhs)) => match (lhs, rhs) {
+            (IndexModify::AddVector { .. }, IndexModify::AddVector { .. }) => Ordering::Equal,
+            (IndexModify::AddVector { .. }, IndexModify::RemoveVector { .. }) => Ordering::Less,
+            (IndexModify::AddVector { .. }, IndexModify::RemovePartition { .. }) => Ordering::Less,
 
-        (Index::RemovePartition { .. }, Index::Ann { .. }) => Ordering::Greater,
-        (Index::RemovePartition { .. }, Index::FilteredAnn { .. }) => Ordering::Greater,
-        (Index::RemovePartition { .. }, Index::Count { .. }) => Ordering::Greater,
-        (Index::RemovePartition { .. }, Index::AddVector { .. }) => Ordering::Greater,
-        (Index::RemovePartition { .. }, Index::RemoveVector { .. }) => Ordering::Greater,
-        (Index::RemovePartition { .. }, Index::RemovePartition { .. }) => Ordering::Equal,
+            (IndexModify::RemoveVector { .. }, IndexModify::AddVector { .. }) => Ordering::Greater,
+            (IndexModify::RemoveVector { .. }, IndexModify::RemoveVector { .. }) => Ordering::Equal,
+            (IndexModify::RemoveVector { .. }, IndexModify::RemovePartition { .. }) => {
+                Ordering::Less
+            }
+
+            (IndexModify::RemovePartition { .. }, IndexModify::AddVector { .. }) => {
+                Ordering::Greater
+            }
+            (IndexModify::RemovePartition { .. }, IndexModify::RemoveVector { .. }) => {
+                Ordering::Greater
+            }
+            (IndexModify::RemovePartition { .. }, IndexModify::RemovePartition { .. }) => {
+                Ordering::Equal
+            }
+        },
     });
 }
 
@@ -799,7 +824,7 @@ where
     T: TableSearch + Send + Sync + 'static,
 {
     match msg {
-        Index::AddVector { partition_id, .. } => {
+        Index::Modify(IndexModify::AddVector { partition_id, .. }) => {
             let index_id = partition_id.index_id();
             if let Some(partition) = partitions.get(&partition_id) {
                 let Some(state) = states.get_mut(&index_id) else {
@@ -821,12 +846,12 @@ where
             Some((state, partition, msg))
         }
 
-        Index::Ann {
+        Index::Search(IndexSearch::Ann {
             index_key,
             embedding,
             limit,
             tx,
-        } => {
+        }) => {
             let Some((partition_id, _)) = table.read().unwrap().partition_id(&index_key, None)
             else {
                 warn!("partition id not found for index key {index_key:?} during ann");
@@ -847,22 +872,22 @@ where
             Some((
                 state,
                 partition,
-                Index::Ann {
+                Index::Search(IndexSearch::Ann {
                     embedding,
                     limit,
                     tx,
                     index_key,
-                },
+                }),
             ))
         }
 
-        Index::FilteredAnn {
+        Index::Search(IndexSearch::FilteredAnn {
             index_key,
             embedding,
             filter,
             limit,
             tx,
-        } => {
+        }) => {
             let Some((partition_id, restrictions)) = table
                 .read()
                 .unwrap()
@@ -887,7 +912,7 @@ where
             };
             let tx = validate_dimensions(tx, &embedding, dimensions)?;
             let msg = if let Some(restrictions) = restrictions {
-                Index::FilteredAnn {
+                Index::Search(IndexSearch::FilteredAnn {
                     embedding,
                     limit,
                     filter: Filter {
@@ -896,19 +921,19 @@ where
                     },
                     tx,
                     index_key,
-                }
+                })
             } else {
-                Index::Ann {
+                Index::Search(IndexSearch::Ann {
                     embedding,
                     limit,
                     tx,
                     index_key,
-                }
+                })
             };
             Some((state, partition, msg))
         }
 
-        Index::Count { index_key, tx } => {
+        Index::Search(IndexSearch::Count { index_key, tx }) => {
             let Some(index_id) = table.read().unwrap().index_id(&index_key) else {
                 let err = anyhow!("index id not found for index key {index_key:?}");
                 warn!("index count: {err}");
@@ -922,7 +947,7 @@ where
             None
         }
 
-        Index::RemoveVector { partition_id, .. } => {
+        Index::Modify(IndexModify::RemoveVector { partition_id, .. }) => {
             let index_id = partition_id.index_id();
             states
                 .get_mut(&index_id)
@@ -930,7 +955,7 @@ where
                 .map(|(state, partition)| (state, Arc::clone(partition), msg))
         }
 
-        Index::RemovePartition { partition_id } => {
+        Index::Modify(IndexModify::RemovePartition { partition_id }) => {
             if let Some(idx) = partitions.remove(&partition_id) {
                 idx.stop();
             };
@@ -949,7 +974,7 @@ async fn dispatch_task<I, T>(
     I: UsearchIndex + Send + Sync + 'static,
     T: TableSearch + Send + Sync + 'static,
 {
-    if let Index::AddVector { .. } = &msg {
+    if let Index::Modify(IndexModify::AddVector { .. }) = &msg {
         let operation_permit = state.operation.permit_for_capacity_and_size().await;
         let is_global = partition.partition_id.index_id().is_global();
         if needs_more_capacity(partition.idx.as_ref(), is_global).is_some() {
@@ -989,7 +1014,7 @@ async fn dispatch_task<I, T>(
 }
 
 fn should_run_on_tokio(msg: &Index) -> bool {
-    matches!(msg, Index::Ann { .. })
+    matches!(msg, Index::Search(IndexSearch::Ann { .. }))
 }
 
 fn process<I, T>(
@@ -1002,37 +1027,35 @@ fn process<I, T>(
     T: TableSearch + Send + Sync + 'static,
 {
     match msg {
-        Index::AddVector {
+        Index::Modify(IndexModify::AddVector {
             primary_id,
             embedding,
             in_progress: _in_progress,
             ..
-        } => add(partition.idx.as_ref(), primary_id, &embedding, &size),
+        }) => add(partition.idx.as_ref(), primary_id, &embedding, &size),
 
-        Index::Ann {
+        Index::Search(IndexSearch::Ann {
             embedding,
             limit,
             tx,
             ..
-        } => ann(partition, tx, &table, embedding, limit),
+        }) => ann(partition, tx, &table, embedding, limit),
 
-        Index::FilteredAnn {
+        Index::Search(IndexSearch::FilteredAnn {
             embedding,
             limit,
             filter,
             tx,
             ..
-        } => filtered_ann(partition, tx, &table, embedding, filter, limit),
+        }) => filtered_ann(partition, tx, &table, embedding, filter, limit),
 
-        Index::Count { .. } => unreachable!(),
-
-        Index::RemoveVector {
+        Index::Modify(IndexModify::RemoveVector {
             primary_id,
             in_progress: _in_progress,
             ..
-        } => remove(partition.idx.as_ref(), primary_id, &size),
+        }) => remove(partition.idx.as_ref(), primary_id, &size),
 
-        Index::RemovePartition { .. } => unreachable!(),
+        _ => unreachable!(),
     }
 }
 
@@ -1180,7 +1203,7 @@ async fn check_memory_allocation(
     allocate_prev: &mut Allocate,
     key: &IndexKey,
 ) -> bool {
-    if !matches!(msg, Index::AddVector { .. }) {
+    if !matches!(msg, Index::Modify(IndexModify::AddVector { .. })) {
         return true;
     }
 
@@ -1229,7 +1252,8 @@ mod tests {
     use super::*;
     use crate::Config;
     use crate::IndexKey;
-    use crate::index::IndexExt;
+    use crate::index::IndexModifyExt;
+    use crate::index::IndexSearchExt;
     use crate::memory;
     use crate::table::IndexIdGenerator;
     use crate::table::MockTableSearch;
@@ -1245,7 +1269,7 @@ mod tests {
 
     fn add_concurrently(
         partition_id: PartitionId,
-        index: mpsc::Sender<Index>,
+        index: mpsc::Sender<IndexModify>,
         threads: usize,
         adds_per_worker: usize,
         dimensions: NonZeroUsize,
@@ -1272,7 +1296,7 @@ mod tests {
 
     fn search_concurrently(
         index_key: IndexKey,
-        index: mpsc::Sender<Index>,
+        index: mpsc::Sender<IndexSearch>,
         threads: usize,
         searches_per_worker: usize,
         dimensions: NonZeroUsize,
@@ -1309,7 +1333,7 @@ mod tests {
         let threads = Handle::current().metrics().num_workers() + rayon::current_num_threads();
         let table = Arc::new(RwLock::new(MockTableSearch::new()));
         let index_key = IndexKey::new(&"vector".into(), &"store".into());
-        let actor = new(
+        let (index_modify, index_search) = new(
             move || Ok(Arc::new(ThreadedUsearchIndex::new(options, threads)?)),
             index_key.clone(),
             NonZeroUsize::new(3).unwrap().into(),
@@ -1321,13 +1345,13 @@ mod tests {
 
         let index_id = IndexIdGenerator::new().next(true).unwrap();
         let partition_id = PartitionId::global(index_id);
-        actor
+        index_modify
             .add_vector(partition_id, 1.into(), vec![1., 1., 1.].into(), None)
             .await;
-        actor
+        index_modify
             .add_vector(partition_id, 2.into(), vec![2., -2., 2.].into(), None)
             .await;
-        actor
+        index_modify
             .add_vector(partition_id, 3.into(), vec![3., 3., 3.].into(), None)
             .await;
 
@@ -1347,7 +1371,7 @@ mod tests {
             }
         });
         time::timeout(Duration::from_secs(10), async {
-            while actor.count(index_key.clone()).await.unwrap() != 3 {
+            while index_search.count(index_key.clone()).await.unwrap() != 3 {
                 task::yield_now().await;
             }
         })
@@ -1362,7 +1386,7 @@ mod tests {
             .once()
             .returning(|_, _| Some([CqlValue::Int(2)].into()));
 
-        let (primary_keys, distances) = actor
+        let (primary_keys, distances) = index_search
             .ann(
                 index_key.clone(),
                 vec![2.2, -2.2, 2.2].into(),
@@ -1374,22 +1398,24 @@ mod tests {
         assert_eq!(distances.len(), 1);
         assert_eq!(primary_keys.first().unwrap(), &[CqlValue::Int(2)].into());
 
-        actor.remove_vector(partition_id, 3.into(), None).await;
+        index_modify
+            .remove_vector(partition_id, 3.into(), None)
+            .await;
 
         time::timeout(Duration::from_secs(10), async {
-            while actor.count(index_key.clone()).await.unwrap() != 2 {
+            while index_search.count(index_key.clone()).await.unwrap() != 2 {
                 task::yield_now().await;
             }
         })
         .await
         .unwrap();
 
-        actor
+        index_modify
             .add_vector(partition_id, 3.into(), vec![2.1, -2.1, 2.1].into(), None)
             .await;
 
         time::timeout(Duration::from_secs(10), async {
-            while actor.count(index_key.clone()).await.unwrap() != 3 {
+            while index_search.count(index_key.clone()).await.unwrap() != 3 {
                 task::yield_now().await;
             }
         })
@@ -1405,7 +1431,7 @@ mod tests {
             .returning(|_, _| Some([CqlValue::Int(3)].into()));
 
         time::timeout(Duration::from_secs(10), async {
-            while actor
+            while index_search
                 .ann(
                     index_key.clone(),
                     vec![2.2, -2.2, 2.2].into(),
@@ -1424,10 +1450,12 @@ mod tests {
         .await
         .unwrap();
 
-        actor.remove_vector(partition_id, 3.into(), None).await;
+        index_modify
+            .remove_vector(partition_id, 3.into(), None)
+            .await;
 
         time::timeout(Duration::from_secs(10), async {
-            while actor.count(index_key.clone()).await.unwrap() != 2 {
+            while index_search.count(index_key.clone()).await.unwrap() != 2 {
                 task::yield_now().await;
             }
         })
@@ -1442,7 +1470,7 @@ mod tests {
             .once()
             .returning(|_, _| Some([CqlValue::Int(2)].into()));
 
-        let (primary_keys, distances) = actor
+        let (primary_keys, distances) = index_search
             .ann(
                 index_key,
                 vec![2.2, -2.2, 2.2].into(),
@@ -1467,7 +1495,7 @@ mod tests {
         let threads = Handle::current().metrics().num_workers() + rayon::current_num_threads();
         let table = Arc::new(RwLock::new(MockTableSearch::new()));
         let index_key = IndexKey::new(&"vector".into(), &"store".into());
-        let actor = new(
+        let (index_modify, index_search) = new(
             move || Ok(Arc::new(ThreadedUsearchIndex::new(options, threads)?)),
             index_key.clone(),
             NonZeroUsize::new(3).unwrap().into(),
@@ -1484,7 +1512,7 @@ mod tests {
         });
         let index_id = IndexIdGenerator::new().next(true).unwrap();
         let partition_id = PartitionId::global(index_id);
-        actor
+        index_modify
             .add_vector(partition_id, 1.into(), vec![1., 1., 1.].into(), None)
             .await;
         let mut memory_rx = memory_respond.await.unwrap();
@@ -1496,20 +1524,20 @@ mod tests {
             .with(eq(index_key.clone()))
             .returning(move |_| Some(index_id));
 
-        assert_eq!(actor.count(index_key.clone()).await.unwrap(), 0);
+        assert_eq!(index_search.count(index_key.clone()).await.unwrap(), 0);
 
         let memory_respond = tokio::spawn(async move {
             let Memory::CanAllocate { tx } = memory_rx.recv().await.unwrap();
             _ = tx.send(Allocate::Can);
         });
-        actor
+        index_modify
             .add_vector(partition_id, 1.into(), vec![1., 1., 1.].into(), None)
             .await;
         memory_respond.await.unwrap();
 
         // Wait for the add operation to complete, as it runs in a separate task.
         time::timeout(Duration::from_secs(10), async {
-            while actor.count(index_key.clone()).await.unwrap() != 1 {
+            while index_search.count(index_key.clone()).await.unwrap() != 1 {
                 task::yield_now().await;
             }
         })
@@ -1534,7 +1562,7 @@ mod tests {
         let threads = Handle::current().metrics().num_workers() + rayon::current_num_threads();
         let table = Arc::new(RwLock::new(MockTableSearch::new()));
         let index_key = IndexKey::new(&"vector".into(), &"store".into());
-        let index = new(
+        let (index_modify, index_search) = new(
             move || Ok(Arc::new(ThreadedUsearchIndex::new(options, threads)?)),
             index_key.clone(),
             dimensions.into(),
@@ -1559,14 +1587,14 @@ mod tests {
         });
         let add_handles = add_concurrently(
             partition_id,
-            index.clone(),
+            index_modify.clone(),
             threads,
             adds_per_worker,
             dimensions,
         );
         let search_handles = search_concurrently(
             index_key.clone(),
-            index.clone(),
+            index_search.clone(),
             threads,
             adds_per_worker,
             dimensions,
@@ -1588,7 +1616,8 @@ mod tests {
 
         // Wait for expected number of vectors to be added.
         time::timeout(Duration::from_secs(10), async {
-            while index.count(index_key.clone()).await.unwrap() != threads * adds_per_worker {
+            while index_search.count(index_key.clone()).await.unwrap() != threads * adds_per_worker
+            {
                 task::yield_now().await;
             }
         })

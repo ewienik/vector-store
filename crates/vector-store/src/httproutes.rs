@@ -18,7 +18,7 @@ use crate::db_index::DbIndexExt;
 use crate::distance;
 use crate::engine::Engine;
 use crate::engine::EngineExt;
-use crate::index::IndexExt;
+use crate::index::IndexSearchExt;
 use crate::index::validator;
 use crate::info::Info;
 use crate::internals::Internals;
