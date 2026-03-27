@@ -664,15 +664,13 @@ where
 }
 
 struct IndexState {
-    dimensions: Dimensions,
     size: Arc<AtomicUsize>,
     operation: operation::Operation,
 }
 
 impl IndexState {
-    fn new(dimensions: Dimensions) -> Self {
+    fn new() -> Self {
         Self {
-            dimensions,
             size: Arc::new(AtomicUsize::new(0)),
             operation: operation::Operation::new(),
         }
@@ -773,9 +771,7 @@ where
                     })
                     .ok()?,
             ));
-            let state = states
-                .entry(index_id)
-                .or_insert_with(|| IndexState::new(dimensions));
+            let state = states.entry(index_id).or_insert_with(IndexState::new);
             partitions.insert(partition_id, Arc::clone(&partition));
             Some((state, partition, msg))
         }
@@ -802,6 +798,7 @@ where
                 _ = tx.send(Ok((vec![], vec![])));
                 return None;
             };
+            let tx = validate_dimensions(tx, &embedding, dimensions)?;
             Some((
                 state,
                 partition,
@@ -843,6 +840,7 @@ where
                 _ = tx.send(Ok((vec![], vec![])));
                 return None;
             };
+            let tx = validate_dimensions(tx, &embedding, dimensions)?;
             let msg = if let Some(restrictions) = restrictions {
                 Index::FilteredAnn {
                     embedding,
@@ -928,13 +926,12 @@ async fn dispatch_task<I, T>(
     let operation_permit = state.operation.permit_for_message(&msg).await;
 
     let table = Arc::clone(table);
-    let dimensions = state.dimensions;
     let size = Arc::clone(&state.size);
     if should_run_on_tokio(&msg) {
         let permit = Arc::clone(tokio_semaphore).acquire_owned().await.unwrap();
         tokio::spawn(async move {
             crate::move_to_the_end_of_async_runtime_queue().await;
-            process(partition, table, dimensions, size, msg);
+            process(partition, table, size, msg);
             drop(permit);
             drop(operation_permit);
         });
@@ -942,7 +939,7 @@ async fn dispatch_task<I, T>(
     }
     let permit = Arc::clone(rayon_semaphore).acquire_owned().await.unwrap();
     rayon::spawn(move || {
-        process(partition, table, dimensions, size, msg);
+        process(partition, table, size, msg);
         drop(permit);
         drop(operation_permit);
     });
@@ -955,7 +952,6 @@ fn should_run_on_tokio(msg: &Index) -> bool {
 fn process<I, T>(
     partition: Arc<PartitionState<I>>,
     table: Arc<RwLock<T>>,
-    dimensions: Dimensions,
     size: Arc<AtomicUsize>,
     msg: Index,
 ) where
@@ -975,11 +971,7 @@ fn process<I, T>(
             limit,
             tx,
             ..
-        } => {
-            if let Some(tx) = validate_dimensions(tx, &embedding, dimensions) {
-                ann(partition, tx, &table, embedding, limit);
-            }
-        }
+        } => ann(partition, tx, &table, embedding, limit),
 
         Index::FilteredAnn {
             embedding,
@@ -987,11 +979,7 @@ fn process<I, T>(
             filter,
             tx,
             ..
-        } => {
-            if let Some(tx) = validate_dimensions(tx, &embedding, dimensions) {
-                filtered_ann(partition, tx, &table, embedding, filter, limit);
-            }
-        }
+        } => filtered_ann(partition, tx, &table, embedding, filter, limit),
 
         Index::Count { .. } => unreachable!(),
 
