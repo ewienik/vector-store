@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Once;
 use std::sync::atomic::AtomicI64;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
@@ -436,6 +437,407 @@ fn search(c: &mut Criterion) {
     }
 }
 
+fn cdc_add(c: &mut Criterion) {
+    init();
+
+    const DIMENSIONS: usize = 128;
+    let concurrency = default_concurrency();
+    let index_metadata = default_index_metadata(DIMENSIONS);
+
+    let mut group = c.benchmark_group("pipeline");
+    group.throughput(criterion::Throughput::Elements(concurrency as u64));
+
+    let fixture = LazyLock::new(|| {
+        let runtime = default_runtime();
+        let notify_stop = Arc::new(Notify::new());
+        let (tx_db_client, rx_db_client) = oneshot::channel();
+        runtime.spawn({
+            let index_metadata = index_metadata.clone();
+            let notify_stop = notify_stop.clone();
+            async move {
+                let node_state = vector_store::new_node_state().await;
+                let (db_actor, db) = db_basic::new(node_state.clone());
+                setup_table(
+                    &db,
+                    &index_metadata,
+                    ["id".into()],
+                    [("id".into(), NativeType::BigInt)],
+                );
+                let (_config_tx, config_rx) = watch::channel(default_config().await);
+                let (_server, client) = run_vector_store(config_rx, node_state, db_actor).await;
+
+                let (tx, rx) = mpsc::channel(concurrency);
+
+                setup_index(&db, index_metadata.clone(), None, Some(scan_fn_mpsc(rx)));
+                wait_until_index_is_ready(&client, &index_metadata).await;
+
+                tx_db_client.send((db, client, tx)).unwrap();
+                notify_stop.notified().await;
+            }
+        });
+        let (db, client, tx) = rx_db_client.blocking_recv().unwrap();
+        (runtime, notify_stop, db, client, tx)
+    });
+
+    let next_pk = Arc::new(AtomicI64::new(0));
+    group.bench_with_input(
+        BenchmarkId::new("cdc-add", concurrency),
+        &concurrency,
+        |b, concurrency| {
+            let (runtime, _, _, _, tx) = &*fixture;
+            b.to_async(runtime).iter_custom(|iters| {
+                let tx = tx.clone();
+                let next_pk = Arc::clone(&next_pk);
+                async move {
+                    run_with_concurrency(*concurrency, iters, move |it| {
+                        let tx = tx.clone();
+                        let pk = next_pk.fetch_add(1, Ordering::Relaxed);
+                        async move {
+                            let (tx_in_progress, mut rx_in_progress) = mpsc::channel(1);
+                            let request = (
+                                [(CqlValue::BigInt(pk))].into_iter().collect(),
+                                Some(vec![it as f32; DIMENSIONS].into()),
+                                Timestamp::from_unix_timestamp(0),
+                                Some(tx_in_progress.into()),
+                            );
+                            let start = Instant::now();
+                            tx.send(request).await.unwrap();
+                            // wait until in-progress marker is dropped
+                            while rx_in_progress.recv().await.is_some() {}
+                            start.elapsed()
+                        }
+                    })
+                    .await
+                }
+            });
+        },
+    );
+
+    if let Some((runtime, notify_stop, db, client, _)) = LazyLock::get(&fixture) {
+        delete_index(db, &index_metadata);
+        runtime.block_on(wait_until_index_is_removed(client, &index_metadata));
+        notify_stop.notify_one();
+        wait_until_all_tasks_finished(runtime);
+    }
+}
+
+fn cdc_update(c: &mut Criterion) {
+    init();
+
+    const DIMENSIONS: usize = 1536;
+    const INDEX_SIZE: usize = 100000;
+    let concurrency = default_concurrency();
+    let index_metadata = default_index_metadata(DIMENSIONS);
+
+    let mut group = c.benchmark_group("pipeline");
+    group.throughput(criterion::Throughput::Elements(concurrency as u64));
+
+    let fixture = LazyLock::new(|| {
+        let runtime = default_runtime();
+        let notify_stop = Arc::new(Notify::new());
+        let (tx_client, rx_client) = oneshot::channel();
+        let (tx_fullscan, rx_fullscan) = mpsc::channel(runtime.metrics().num_workers() * 3);
+        let (tx_cdc, rx_cdc) = mpsc::channel(concurrency);
+        runtime.spawn({
+            let notify_stop = notify_stop.clone();
+            let index_metadata = index_metadata.clone();
+            async move {
+                let node_state = vector_store::new_node_state().await;
+                let (db_actor, db) = db_basic::new(node_state.clone());
+                setup_table(
+                    &db,
+                    &index_metadata,
+                    ["id".into()],
+                    [("id".into(), NativeType::BigInt)],
+                );
+                setup_index(
+                    &db,
+                    index_metadata.clone(),
+                    Some(scan_fn_mpsc(rx_fullscan)),
+                    Some(scan_fn_mpsc(rx_cdc)),
+                );
+                let (_config_tx, config_rx) = watch::channel(default_config().await);
+                let (_server, client) = run_vector_store(config_rx, node_state, db_actor).await;
+
+                let (tx_in_progress, mut rx_in_progress) = mpsc::channel(1);
+                for it in 0..INDEX_SIZE {
+                    tx_fullscan
+                        .send((
+                            [(CqlValue::BigInt(it as i64))].into_iter().collect(),
+                            Some(vec![it as f32; DIMENSIONS].into()),
+                            Timestamp::from_unix_timestamp(0),
+                            Some(tx_in_progress.clone().into()),
+                        ))
+                        .await
+                        .unwrap();
+                }
+                // wait until all in-progress markers are dropped
+                drop(tx_in_progress);
+                while rx_in_progress.recv().await.is_some() {}
+
+                drop(tx_fullscan);
+                wait_until_index_is_ready(&client, &index_metadata).await;
+
+                tx_client.send((db, client)).unwrap();
+                notify_stop.notified().await;
+            }
+        });
+        let (db, client) = rx_client.blocking_recv().unwrap();
+        (runtime, notify_stop, db, client, tx_cdc)
+    });
+
+    let next_timestamp = Arc::new(AtomicU64::new(0));
+    group.bench_with_input(
+        BenchmarkId::new("cdc-update", concurrency),
+        &concurrency,
+        |b, concurrency| {
+            let (runtime, _, _, _, tx_cdc) = &*fixture;
+            let next_timestamp = Arc::clone(&next_timestamp);
+            b.to_async(runtime).iter_custom(|iters| {
+                let next_timestamp = Arc::clone(&next_timestamp);
+                let tx_cdc = tx_cdc.clone();
+                async move {
+                    run_with_concurrency(*concurrency, iters, move |it| {
+                        let next_timestamp = Arc::clone(&next_timestamp);
+                        let tx_cdc = tx_cdc.clone();
+                        async move {
+                            let id = rand::random_range(0..INDEX_SIZE) as i64;
+                            let vector = vec![it as f32; DIMENSIONS].into();
+                            let timestamp = next_timestamp.fetch_add(1, Ordering::Relaxed);
+                            let (tx_in_progress, mut rx_in_progress) = mpsc::channel(1);
+                            let start = Instant::now();
+                            tx_cdc
+                                .send((
+                                    [(CqlValue::BigInt(id))].into_iter().collect(),
+                                    Some(vector),
+                                    Timestamp::from_unix_timestamp(timestamp),
+                                    Some(tx_in_progress.clone().into()),
+                                ))
+                                .await
+                                .unwrap();
+                            // wait until the in-progress marker is dropped
+                            drop(tx_in_progress);
+                            while rx_in_progress.recv().await.is_some() {}
+                            start.elapsed()
+                        }
+                    })
+                    .await
+                }
+            })
+        },
+    );
+
+    if let Some((runtime, notify_stop, db, client, _)) = LazyLock::get(&fixture) {
+        delete_index(db, &index_metadata);
+        runtime.block_on(wait_until_index_is_removed(client, &index_metadata));
+        notify_stop.notify_one();
+        wait_until_all_tasks_finished(runtime);
+    }
+}
+
+fn search_while_updating(c: &mut Criterion) {
+    init();
+
+    const DIMENSIONS: usize = 1536;
+    const INDEX_SIZE: usize = 100000;
+    let concurrency = default_concurrency();
+    let index_metadata = default_index_metadata(DIMENSIONS);
+    let index_metadata_bg = IndexMetadata {
+        table_name: "tbl_bg".into(),
+        index_name: "idx_bg".into(),
+        ..default_index_metadata(DIMENSIONS)
+    };
+    let limit = NonZeroUsize::new(1).unwrap().into();
+
+    let mut group = c.benchmark_group("pipeline");
+    group.throughput(criterion::Throughput::Elements(concurrency as u64));
+
+    let fixture = LazyLock::new(|| {
+        let runtime = default_runtime();
+        let notify_stop = Arc::new(Notify::new());
+        let (tx_client, rx_client) = oneshot::channel();
+        let (tx_fullscan, rx_fullscan) = mpsc::channel(runtime.metrics().num_workers() * 3);
+        let (tx_cdc, rx_cdc) = mpsc::channel(runtime.metrics().num_workers() * 3);
+        let (tx_fullscan_bg, rx_fullscan_bg) = mpsc::channel(runtime.metrics().num_workers() * 3);
+        let (tx_cdc_bg, rx_cdc_bg) = mpsc::channel(runtime.metrics().num_workers() * 3);
+        runtime.spawn({
+            let notify_stop = notify_stop.clone();
+            let index_metadata = index_metadata.clone();
+            let index_metadata_bg = index_metadata_bg.clone();
+            async move {
+                let node_state = vector_store::new_node_state().await;
+                let (db_actor, db) = db_basic::new(node_state.clone());
+
+                setup_table(
+                    &db,
+                    &index_metadata,
+                    ["id".into()],
+                    [("id".into(), NativeType::BigInt)],
+                );
+                setup_index(
+                    &db,
+                    index_metadata.clone(),
+                    Some(scan_fn_mpsc(rx_fullscan)),
+                    Some(scan_fn_mpsc(rx_cdc)),
+                );
+
+                setup_table(
+                    &db,
+                    &index_metadata_bg,
+                    ["id".into()],
+                    [("id".into(), NativeType::BigInt)],
+                );
+                setup_index(
+                    &db,
+                    index_metadata_bg.clone(),
+                    Some(scan_fn_mpsc(rx_fullscan_bg)),
+                    Some(scan_fn_mpsc(rx_cdc_bg)),
+                );
+
+                let (_config_tx, config_rx) = watch::channel(default_config().await);
+                let (_server, client) = run_vector_store(config_rx, node_state, db_actor).await;
+
+                let (tx_in_progress, mut rx_in_progress) = mpsc::channel(1);
+                for it in 0..INDEX_SIZE {
+                    tx_fullscan
+                        .send((
+                            [(CqlValue::BigInt(it as i64))].into_iter().collect(),
+                            Some(vec![it as f32; DIMENSIONS].into()),
+                            Timestamp::from_unix_timestamp(0),
+                            Some(tx_in_progress.clone().into()),
+                        ))
+                        .await
+                        .unwrap();
+                    tx_fullscan_bg
+                        .send((
+                            [(CqlValue::BigInt(it as i64))].into_iter().collect(),
+                            Some(vec![it as f32; DIMENSIONS].into()),
+                            Timestamp::from_unix_timestamp(0),
+                            Some(tx_in_progress.clone().into()),
+                        ))
+                        .await
+                        .unwrap();
+                }
+                // wait until all in-progress markers are dropped
+                drop(tx_in_progress);
+                while rx_in_progress.recv().await.is_some() {}
+
+                drop(tx_fullscan);
+                wait_until_index_is_ready(&client, &index_metadata).await;
+                drop(tx_fullscan_bg);
+                wait_until_index_is_ready(&client, &index_metadata_bg).await;
+
+                // run updates in the background while searching
+                let cdc_task = tokio::spawn(async move {
+                    let mut next_timestamp = 0;
+                    let (tx_in_progress, mut rx_in_progress) = mpsc::channel(1);
+                    while Arc::clone(&notify_stop).notified().now_or_never().is_none() {
+                        let id = rand::random_range(0..INDEX_SIZE) as i64;
+                        let vector = vec![next_timestamp as f32; DIMENSIONS].into();
+                        let timestamp = next_timestamp;
+                        next_timestamp += 1;
+                        if tx_cdc
+                            .send((
+                                [(CqlValue::BigInt(id))].into_iter().collect(),
+                                Some(vector),
+                                Timestamp::from_unix_timestamp(timestamp),
+                                Some(tx_in_progress.clone().into()),
+                            ))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    // wait until all in-progress markers are dropped
+                    drop(tx_in_progress);
+                    while rx_in_progress.recv().await.is_some() {}
+                });
+                let stop_bg = Arc::new(Notify::new());
+                let cdc_task_bg = tokio::spawn({
+                    let stop_bg = Arc::clone(&stop_bg);
+                    async move {
+                        let mut next_timestamp = 0;
+                        let (tx_in_progress, mut rx_in_progress) = mpsc::channel(1);
+                        while Arc::clone(&stop_bg).notified().now_or_never().is_none() {
+                            let id = rand::random_range(0..INDEX_SIZE) as i64;
+                            let vector = vec![next_timestamp as f32; DIMENSIONS].into();
+                            let timestamp = next_timestamp;
+                            next_timestamp += 1;
+                            if tx_cdc_bg
+                                .send((
+                                    [(CqlValue::BigInt(id))].into_iter().collect(),
+                                    Some(vector),
+                                    Timestamp::from_unix_timestamp(timestamp),
+                                    Some(tx_in_progress.clone().into()),
+                                ))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        // wait until all in-progress markers are dropped
+                        drop(tx_in_progress);
+                        while rx_in_progress.recv().await.is_some() {}
+                    }
+                });
+                tx_client.send(client).unwrap();
+
+                cdc_task.await.unwrap();
+                stop_bg.notify_one();
+                cdc_task_bg.await.unwrap();
+                delete_index(&db, &index_metadata);
+                delete_index(&db, &index_metadata_bg);
+            }
+        });
+        let client = rx_client.blocking_recv().unwrap();
+        (runtime, notify_stop, client)
+    });
+
+    group.bench_with_input(
+        BenchmarkId::new("search-while-updating", concurrency),
+        &concurrency,
+        |b, concurrency| {
+            let (runtime, _, client) = &*fixture;
+            let index_metadata = index_metadata.clone();
+            let client = client.clone();
+            b.to_async(runtime).iter_custom(|iters| {
+                let index_metadata = index_metadata.clone();
+                let client = client.clone();
+                async move {
+                    run_with_concurrency(*concurrency, iters, move |it| {
+                        let index_metadata = index_metadata.clone();
+                        let client = client.clone();
+                        async move {
+                            let vector = vec![it as f32; DIMENSIONS];
+                            let start = Instant::now();
+                            _ = client
+                                .ann(
+                                    &index_metadata.keyspace_name,
+                                    &index_metadata.index_name,
+                                    vector.into(),
+                                    None,
+                                    limit,
+                                )
+                                .await;
+                            start.elapsed()
+                        }
+                    })
+                    .await
+                }
+            });
+        },
+    );
+
+    if let Some((runtime, notify_stop, client)) = LazyLock::get(&fixture) {
+        notify_stop.notify_one();
+        runtime.block_on(wait_until_index_is_removed(client, &index_metadata));
+        runtime.block_on(wait_until_index_is_removed(client, &index_metadata_bg));
+        wait_until_all_tasks_finished(runtime);
+    }
+}
+
 async fn run_with_concurrency<F, Fut>(concurrency: usize, iters: u64, f: F) -> Duration
 where
     F: Fn(u64) -> Fut + Clone + Send + Sync + 'static,
@@ -459,5 +861,12 @@ where
         .await
 }
 
-criterion_group!(benches, fullscan_add, search);
+criterion_group!(
+    benches,
+    fullscan_add,
+    search,
+    cdc_add,
+    cdc_update,
+    search_while_updating,
+);
 criterion_main!(benches);
