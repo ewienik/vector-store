@@ -14,7 +14,7 @@ use crate::db::DbExt;
 use crate::db_index::DbIndex;
 use crate::db_index::DbIndexExt;
 use crate::factory::IndexFactory;
-use crate::index::Index;
+use crate::index::IndexSearch;
 use crate::index::factory::IndexConfiguration;
 use crate::memory;
 use crate::memory::Memory;
@@ -38,7 +38,7 @@ use tracing::trace;
 
 type GetIndexKeysR = Vec<(IndexKey, Quantization)>;
 type AddIndexR = anyhow::Result<()>;
-type GetIndexR = Option<(mpsc::Sender<Index>, mpsc::Sender<DbIndex>)>;
+type GetIndexR = Option<(mpsc::Sender<IndexSearch>, mpsc::Sender<DbIndex>)>;
 
 pub(crate) enum Engine {
     GetIndexIds {
@@ -102,7 +102,7 @@ impl EngineExt for mpsc::Sender<Engine> {
 type IndexesT = HashMap<
     IndexKey,
     (
-        mpsc::Sender<Index>,
+        mpsc::Sender<IndexSearch>,
         mpsc::Sender<MonitorItems>,
         mpsc::Sender<DbIndex>,
         Quantization,
@@ -217,7 +217,7 @@ async fn add_index(
         }
     };
 
-    let index_actor = match index_factory.create_index(
+    let (index_modify, index_search) = match index_factory.create_index(
         IndexConfiguration {
             key: key.clone(),
             dimensions: metadata.dimensions,
@@ -243,7 +243,7 @@ async fn add_index(
         key.clone(),
         table,
         embeddings_stream,
-        index_actor.clone(),
+        index_modify.clone(),
         metrics,
     )
     .await
@@ -261,7 +261,7 @@ async fn add_index(
 
     indexes.insert(
         key.clone(),
-        (index_actor, monitor_actor, db_index, metadata.quantization),
+        (index_search, monitor_actor, db_index, metadata.quantization),
     );
     info!("creating the index {key}");
     tx.send(Ok(()))
@@ -279,7 +279,7 @@ async fn get_index(key: IndexKey, tx: oneshot::Sender<GetIndexR>, indexes: &Inde
             .get(&key)
             .map(|(index, _, db_index, _)| (index.clone(), db_index.clone())),
     )
-    .unwrap_or_else(|_| trace!("get_index: unable to send response"));
+    .unwrap_or_else(|_| trace!("get_index_search: unable to send response"));
 }
 
 #[cfg(test)]

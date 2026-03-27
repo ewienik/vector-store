@@ -10,7 +10,8 @@ use crate::ExpansionSearch;
 use crate::IndexKey;
 use crate::Quantization;
 use crate::SpaceType;
-use crate::index::actor::Index;
+use crate::index::actor::IndexModify;
+use crate::index::actor::IndexSearch;
 use crate::memory::Memory;
 use crate::table::Table;
 use std::sync::Arc;
@@ -33,6 +34,6 @@ pub trait IndexFactory {
         index: IndexConfiguration,
         table: Arc<RwLock<Table>>,
         memory: mpsc::Sender<Memory>,
-    ) -> anyhow::Result<mpsc::Sender<Index>>;
+    ) -> anyhow::Result<(mpsc::Sender<IndexModify>, mpsc::Sender<IndexSearch>)>;
     fn index_engine_version(&self) -> String;
 }
