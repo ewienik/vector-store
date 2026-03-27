@@ -686,9 +686,11 @@ fn new<I: UsearchIndex + Send + Sync + 'static>(
     rayon_semaphore: Arc<Semaphore>,
     memory: mpsc::Sender<Memory>,
 ) -> anyhow::Result<mpsc::Sender<Index>> {
-    // TODO: The value of channel size was taken from initial benchmarks. Needs more testing
-    const CHANNEL_SIZE: usize = 10;
-    let (tx, mut rx) = mpsc::channel(CHANNEL_SIZE);
+    // The factor can be equal to number of operations
+    //const BUFFER_FACTOR_MULTIPLY: usize = 1;
+    //let buffer_size = Handle::current().metrics().num_workers() * BUFFER_FACTOR_MULTIPLY;
+    let buffer_size = std::env::var("BUFFER_SIZE").unwrap().parse().unwrap();
+    let (tx, mut rx) = mpsc::channel(buffer_size);
 
     tokio::spawn(
         {
@@ -700,32 +702,37 @@ fn new<I: UsearchIndex + Send + Sync + 'static>(
 
                 let mut allocate_prev = Allocate::Can;
 
+                let mut buffer = Vec::with_capacity(buffer_size);
                 while let Some(msg) = rx.recv().await {
-                    if !check_memory_allocation(&msg, &memory, &mut allocate_prev, &index_key).await
-                    {
-                        continue;
+                    fill_and_sort_buffer(&mut buffer, msg, &mut rx);
+                    for msg in buffer.drain(..) {
+                        if !check_memory_allocation(&msg, &memory, &mut allocate_prev, &index_key)
+                            .await
+                        {
+                            continue;
+                        }
+
+                        let Some((state, partition, msg)) = preprocess(
+                            index_fn.clone(),
+                            &mut states,
+                            &mut partitions,
+                            table.as_ref(),
+                            dimensions,
+                            msg,
+                        ) else {
+                            continue;
+                        };
+
+                        dispatch_task(
+                            state,
+                            partition,
+                            &table,
+                            &tokio_semaphore,
+                            &rayon_semaphore,
+                            msg,
+                        )
+                        .await;
                     }
-
-                    let Some((state, partition, msg)) = preprocess(
-                        index_fn.clone(),
-                        &mut states,
-                        &mut partitions,
-                        table.as_ref(),
-                        dimensions,
-                        msg,
-                    ) else {
-                        continue;
-                    };
-
-                    dispatch_task(
-                        state,
-                        partition,
-                        &table,
-                        &tokio_semaphore,
-                        &rayon_semaphore,
-                        msg,
-                    )
-                    .await;
                 }
 
                 partitions
@@ -739,6 +746,59 @@ fn new<I: UsearchIndex + Send + Sync + 'static>(
     );
 
     Ok(tx)
+}
+
+fn fill_and_sort_buffer(buffer: &mut Vec<Index>, msg: Index, rx: &mut mpsc::Receiver<Index>) {
+    use std::cmp::Ordering;
+
+    buffer.clear();
+    buffer.push(msg);
+    while let Ok(msg) = rx.try_recv() {
+        buffer.push(msg);
+    }
+    buffer.sort_by(|lhs, rhs| match (lhs, rhs) {
+        (Index::Ann { .. }, Index::Ann { .. }) => Ordering::Equal,
+        (Index::Ann { .. }, Index::FilteredAnn { .. }) => Ordering::Less,
+        (Index::Ann { .. }, Index::Count { .. }) => Ordering::Less,
+        (Index::Ann { .. }, Index::AddVector { .. }) => Ordering::Less,
+        (Index::Ann { .. }, Index::RemoveVector { .. }) => Ordering::Less,
+        (Index::Ann { .. }, Index::RemovePartition { .. }) => Ordering::Less,
+
+        (Index::FilteredAnn { .. }, Index::Ann { .. }) => Ordering::Greater,
+        (Index::FilteredAnn { .. }, Index::FilteredAnn { .. }) => Ordering::Equal,
+        (Index::FilteredAnn { .. }, Index::Count { .. }) => Ordering::Less,
+        (Index::FilteredAnn { .. }, Index::AddVector { .. }) => Ordering::Less,
+        (Index::FilteredAnn { .. }, Index::RemoveVector { .. }) => std::cmp::Ordering::Less,
+        (Index::FilteredAnn { .. }, Index::RemovePartition { .. }) => std::cmp::Ordering::Less,
+
+        (Index::Count { .. }, Index::Ann { .. }) => Ordering::Greater,
+        (Index::Count { .. }, Index::FilteredAnn { .. }) => Ordering::Greater,
+        (Index::Count { .. }, Index::Count { .. }) => Ordering::Equal,
+        (Index::Count { .. }, Index::AddVector { .. }) => Ordering::Less,
+        (Index::Count { .. }, Index::RemoveVector { .. }) => Ordering::Less,
+        (Index::Count { .. }, Index::RemovePartition { .. }) => Ordering::Less,
+
+        (Index::AddVector { .. }, Index::Ann { .. }) => Ordering::Greater,
+        (Index::AddVector { .. }, Index::FilteredAnn { .. }) => Ordering::Greater,
+        (Index::AddVector { .. }, Index::Count { .. }) => Ordering::Greater,
+        (Index::AddVector { .. }, Index::AddVector { .. }) => Ordering::Equal,
+        (Index::AddVector { .. }, Index::RemoveVector { .. }) => Ordering::Less,
+        (Index::AddVector { .. }, Index::RemovePartition { .. }) => Ordering::Less,
+
+        (Index::RemoveVector { .. }, Index::Ann { .. }) => Ordering::Greater,
+        (Index::RemoveVector { .. }, Index::FilteredAnn { .. }) => Ordering::Greater,
+        (Index::RemoveVector { .. }, Index::Count { .. }) => Ordering::Greater,
+        (Index::RemoveVector { .. }, Index::AddVector { .. }) => Ordering::Greater,
+        (Index::RemoveVector { .. }, Index::RemoveVector { .. }) => Ordering::Equal,
+        (Index::RemoveVector { .. }, Index::RemovePartition { .. }) => Ordering::Less,
+
+        (Index::RemovePartition { .. }, Index::Ann { .. }) => Ordering::Greater,
+        (Index::RemovePartition { .. }, Index::FilteredAnn { .. }) => Ordering::Greater,
+        (Index::RemovePartition { .. }, Index::Count { .. }) => Ordering::Greater,
+        (Index::RemovePartition { .. }, Index::AddVector { .. }) => Ordering::Greater,
+        (Index::RemovePartition { .. }, Index::RemoveVector { .. }) => Ordering::Greater,
+        (Index::RemovePartition { .. }, Index::RemovePartition { .. }) => Ordering::Equal,
+    });
 }
 
 fn preprocess<'a, I, T>(
@@ -1333,9 +1393,26 @@ mod tests {
         assert_eq!(primary_keys.first().unwrap(), &[CqlValue::Int(2)].into());
 
         actor.remove_vector(partition_id, 3.into(), None).await;
+
+        time::timeout(Duration::from_secs(10), async {
+            while actor.count(index_key.clone()).await.unwrap() != 2 {
+                task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
         actor
             .add_vector(partition_id, 3.into(), vec![2.1, -2.1, 2.1].into(), None)
             .await;
+
+        time::timeout(Duration::from_secs(10), async {
+            while actor.count(index_key.clone()).await.unwrap() != 3 {
+                task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
 
         table
             .write()
