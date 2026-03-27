@@ -70,10 +70,15 @@ impl HttpClient {
     ) {
         let resp = self
             .post_ann(keyspace_name, index_name, vector, filter, limit)
-            .await
-            .json::<PostIndexAnnResponse>()
-            .await
-            .unwrap();
+            .await;
+        if !resp.status().is_success() {
+            panic!(
+                "ANN request failed with status {}: {}",
+                resp.status(),
+                resp.text().await.unwrap()
+            );
+        }
+        let resp = resp.json::<PostIndexAnnResponse>().await.unwrap();
         (resp.primary_keys, resp.distances, resp.similarity_scores)
     }
 
