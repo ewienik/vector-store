@@ -27,7 +27,7 @@ use crate::table::Table;
 use crate::table::TableSearch;
 use anyhow::anyhow;
 use std::collections::BTreeMap;
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::iter;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -258,7 +258,8 @@ struct Simulator {
     search: Duration,
     add_remove: Duration,
     reserve: Duration,
-    keys: RwLock<HashSet<PrimaryId>>,
+    keys: RwLock<BTreeSet<PrimaryId>>,
+    capacity: AtomicUsize,
     notify: Arc<Notify>,
 }
 
@@ -277,7 +278,8 @@ impl Simulator {
             search: Duration::ZERO,
             add_remove: Duration::ZERO,
             reserve: Duration::ZERO,
-            keys: RwLock::new(HashSet::new()),
+            keys: RwLock::new(BTreeSet::new()),
+            capacity: AtomicUsize::new(0),
             notify: Arc::new(Notify::new()),
         };
         sim.update(config);
@@ -358,9 +360,7 @@ impl UsearchIndex for RwLock<Simulator> {
         #[allow(clippy::readonly_write_lock)]
         let sim = self.write().unwrap();
         {
-            let mut keys = sim.keys.write().unwrap();
-            let len = keys.len();
-            keys.reserve(size - len);
+            sim.capacity.store(size, Ordering::Relaxed);
         }
 
         sim.wait_reserve(start);
@@ -368,7 +368,7 @@ impl UsearchIndex for RwLock<Simulator> {
     }
 
     fn capacity(&self) -> usize {
-        self.read().unwrap().keys.read().unwrap().capacity()
+        self.read().unwrap().capacity.load(Ordering::Relaxed)
     }
 
     fn size(&self) -> usize {
@@ -404,14 +404,18 @@ impl UsearchIndex for RwLock<Simulator> {
 
         let sim = self.read().unwrap();
         let keys = {
-            let len = sim.keys.read().unwrap().len() as u64;
+            let len = sim.keys.read().unwrap().len();
             if len == 0 {
                 Vec::new()
             } else {
                 let keys = sim.keys.read().unwrap();
                 iter::repeat_with(|| rand::random_range(0..len))
-                    .map(PrimaryId::from)
-                    .filter(|row_id| keys.contains(row_id))
+                    .filter_map(|idx| {
+                        keys.iter().nth(idx).cloned().or_else(|| {
+                            warn!("search: unable to get row_id by index {idx}");
+                            None
+                        })
+                    })
                     .take(limit.0.get())
                     .collect()
             }
