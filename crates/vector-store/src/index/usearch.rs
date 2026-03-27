@@ -55,8 +55,7 @@ use usearch::ScalarKind;
 use usearch::b1x8;
 
 pub struct UsearchIndexFactory {
-    tokio_semaphore: Arc<Semaphore>,
-    rayon_semaphore: Arc<Semaphore>,
+    cpu_semaphore: Arc<Semaphore>,
     mode: Mode,
 }
 
@@ -78,15 +77,13 @@ impl IndexFactory for UsearchIndexFactory {
                     quantization: index.quantization.into(),
                     ..Default::default()
                 };
-                let threads =
-                    Handle::current().metrics().num_workers() + rayon::current_num_threads();
+                let threads = Handle::current().metrics().num_workers();
                 new(
                     move || Ok(Arc::new(ThreadedUsearchIndex::new(options, threads)?)),
                     index.key,
                     index.dimensions,
                     table,
-                    Arc::clone(&self.tokio_semaphore),
-                    Arc::clone(&self.rayon_semaphore),
+                    Arc::clone(&self.cpu_semaphore),
                     memory,
                 )
             }
@@ -100,8 +97,7 @@ impl IndexFactory for UsearchIndexFactory {
                 index.key,
                 index.dimensions,
                 table,
-                Arc::clone(&self.tokio_semaphore),
-                Arc::clone(&self.rayon_semaphore),
+                Arc::clone(&self.cpu_semaphore),
                 memory,
             ),
         }
@@ -116,14 +112,12 @@ impl IndexFactory for UsearchIndexFactory {
 }
 
 pub fn new_usearch(
-    tokio_semaphore: Arc<Semaphore>,
-    rayon_semaphore: Arc<Semaphore>,
+    cpu_semaphore: Arc<Semaphore>,
     mut config_rx: watch::Receiver<Arc<Config>>,
 ) -> anyhow::Result<UsearchIndexFactory> {
     let config = config_rx.borrow_and_update().clone();
     Ok(UsearchIndexFactory {
-        tokio_semaphore,
-        rayon_semaphore,
+        cpu_semaphore,
         mode: if config.usearch_simulator.is_none() {
             Mode::Usearch
         } else {
@@ -682,8 +676,7 @@ fn new<I: UsearchIndex + Send + Sync + 'static>(
     index_key: IndexKey,
     dimensions: Dimensions,
     table: Arc<RwLock<impl TableSearch + Send + Sync + 'static>>,
-    tokio_semaphore: Arc<Semaphore>,
-    rayon_semaphore: Arc<Semaphore>,
+    cpu_semaphore: Arc<Semaphore>,
     memory: mpsc::Sender<Memory>,
 ) -> anyhow::Result<mpsc::Sender<Index>> {
     // The factor can be equal to number of operations
@@ -723,15 +716,7 @@ fn new<I: UsearchIndex + Send + Sync + 'static>(
                             continue;
                         };
 
-                        dispatch_task(
-                            state,
-                            partition,
-                            &table,
-                            &tokio_semaphore,
-                            &rayon_semaphore,
-                            msg,
-                        )
-                        .await;
+                        dispatch_task(state, partition, &table, &cpu_semaphore, msg).await;
                     }
                 }
 
@@ -958,8 +943,7 @@ async fn dispatch_task<I, T>(
     state: &mut IndexState,
     partition: Arc<PartitionState<I>>,
     table: &Arc<RwLock<T>>,
-    tokio_semaphore: &Arc<Semaphore>,
-    rayon_semaphore: &Arc<Semaphore>,
+    cpu_semaphore: &Arc<Semaphore>,
     msg: Index,
 ) where
     I: UsearchIndex + Send + Sync + 'static,
@@ -972,7 +956,7 @@ async fn dispatch_task<I, T>(
             drop(operation_permit);
             let operation_permit = state.operation.permit_for_reserve().await;
             if let Some(capacity) = needs_more_capacity(partition.idx.as_ref(), is_global) {
-                let permit = Arc::clone(rayon_semaphore).acquire_owned().await.unwrap();
+                let permit = Arc::clone(cpu_semaphore).acquire_owned().await.unwrap();
                 let idx = Arc::clone(&partition.idx);
                 rayon::spawn(move || {
                     reserve(idx.as_ref(), capacity);
@@ -987,8 +971,8 @@ async fn dispatch_task<I, T>(
 
     let table = Arc::clone(table);
     let size = Arc::clone(&state.size);
+    let permit = Arc::clone(cpu_semaphore).acquire_owned().await.unwrap();
     if should_run_on_tokio(&msg) {
-        let permit = Arc::clone(tokio_semaphore).acquire_owned().await.unwrap();
         tokio::spawn(async move {
             crate::move_to_the_end_of_async_runtime_queue().await;
             process(partition, table, size, msg);
@@ -997,7 +981,6 @@ async fn dispatch_task<I, T>(
         });
         return;
     }
-    let permit = Arc::clone(rayon_semaphore).acquire_owned().await.unwrap();
     rayon::spawn(move || {
         process(partition, table, size, msg);
         drop(permit);
@@ -1332,7 +1315,6 @@ mod tests {
             NonZeroUsize::new(3).unwrap().into(),
             Arc::clone(&table),
             Arc::new(Semaphore::new(4)),
-            Arc::new(Semaphore::new(4)),
             memory::new(config_rx),
         )
         .unwrap();
@@ -1491,7 +1473,6 @@ mod tests {
             NonZeroUsize::new(3).unwrap().into(),
             Arc::clone(&table),
             Arc::new(Semaphore::new(4)),
-            Arc::new(Semaphore::new(4)),
             memory_tx,
         )
         .unwrap();
@@ -1558,7 +1539,6 @@ mod tests {
             index_key.clone(),
             dimensions.into(),
             Arc::clone(&table),
-            Arc::new(Semaphore::new(Semaphore::MAX_PERMITS)),
             Arc::new(Semaphore::new(Semaphore::MAX_PERMITS)),
             memory::new(config_rx),
         )
