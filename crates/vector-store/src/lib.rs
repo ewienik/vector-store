@@ -650,21 +650,13 @@ async fn move_to_the_end_of_async_runtime_queue() {
 pub fn new_index_factory_usearch(
     config_tx: watch::Receiver<Arc<Config>>,
 ) -> anyhow::Result<Box<dyn IndexFactory + Send + Sync>> {
-    // A semaphore that limits the concurrency of search operations, which are performed on Tokio threads.
+    // A semaphore that limits the concurrency of all index operations.
     // This is a global concurrency limit for all indexes.
-    let search_concurrency = Handle::current().metrics().num_workers();
-    let tokio_semaphore = Arc::new(Semaphore::new(search_concurrency));
-    // A semaphore that limits the concurrency of add/remove operations, which are performed on Rayon threads.
-    // This is a global concurrency limit for all indexes.
-    // The limit is set to 3 times the number of Rayon threads to ensure high throughput.
-    const RAYON_CONCURRENCY_MULTIPLIER: usize = 3;
-    let add_remove_concurrency =
-        (rayon::current_num_threads() * RAYON_CONCURRENCY_MULTIPLIER).min(Semaphore::MAX_PERMITS);
-    let rayon_semaphore = Arc::new(Semaphore::new(add_remove_concurrency));
+    let concurrency = Handle::current().metrics().num_workers();
+    let cpu_semaphore = Arc::new(Semaphore::new(concurrency));
 
     Ok(Box::new(index::usearch::new_usearch(
-        tokio_semaphore,
-        rayon_semaphore,
+        cpu_semaphore,
         config_tx,
     )?))
 }
