@@ -31,7 +31,6 @@ pub use scylla_proxy_cluster::ScyllaProxyNodeConfig;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::future;
-use std::net::Ipv4Addr;
 use std::panic;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -47,31 +46,6 @@ use tracing::info;
 pub use vector_store_cluster::VectorStoreCluster;
 pub use vector_store_cluster::VectorStoreClusterExt;
 pub use vector_store_cluster::VectorStoreNodeConfig;
-
-/// Represents a subnet for services, derived from a base IP address.
-pub struct ServicesSubnet([u8; 3]);
-
-impl ServicesSubnet {
-    pub fn new(ip: Ipv4Addr) -> Self {
-        assert!(
-            ip.is_loopback(),
-            "Base IP for services must be a loopback address"
-        );
-
-        let octets = ip.octets();
-        assert!(
-            octets[3] == 1,
-            "Base IP for services must have the last octet set to 1"
-        );
-
-        Self([octets[0], octets[1], octets[2]])
-    }
-
-    /// Returns an IP address in the subnet with the specified last octet.
-    pub fn ip(&self, octet: u8) -> Ipv4Addr {
-        [self.0[0], self.0[1], self.0[2], octet].into()
-    }
-}
 
 type TestFuture = BoxFuture<'static, ()>;
 

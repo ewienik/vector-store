@@ -37,7 +37,6 @@ use vector_search_validator_tests::Firewall;
 use vector_search_validator_tests::ScyllaCluster;
 use vector_search_validator_tests::ScyllaClusterExt;
 use vector_search_validator_tests::ScyllaProxyCluster;
-use vector_search_validator_tests::ServicesSubnet;
 use vector_search_validator_tests::TestCase;
 use vector_search_validator_tests::Tls;
 use vector_search_validator_tests::VectorStoreCluster;
@@ -185,6 +184,31 @@ async fn fixture(args: &Args) -> TestActors {
 
 pub fn run() -> Result<(), &'static str> {
     vector_search_validator_engine::run(init, register, fixture)
+}
+
+/// Represents a subnet for services, derived from a base IP address.
+pub struct ServicesSubnet([u8; 3]);
+
+impl ServicesSubnet {
+    pub fn new(ip: Ipv4Addr) -> Self {
+        assert!(
+            ip.is_loopback(),
+            "Base IP for services must be a loopback address"
+        );
+
+        let octets = ip.octets();
+        assert!(
+            octets[3] == 1,
+            "Base IP for services must have the last octet set to 1"
+        );
+
+        Self([octets[0], octets[1], octets[2]])
+    }
+
+    /// Returns an IP address in the subnet with the specified last octet.
+    pub fn ip(&self, octet: u8) -> Ipv4Addr {
+        [self.0[0], self.0[1], self.0[2], octet].into()
+    }
 }
 
 #[derive(Clone)]
