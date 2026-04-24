@@ -6,12 +6,12 @@
 use crate::TestActors;
 use crate::common::*;
 use async_backtrace::framed;
+use e2etest::TestCase;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time;
 use tracing::info;
-use vector_search_validator_tests::*;
 
 #[framed]
 pub(crate) async fn new() -> TestCase<TestActors> {

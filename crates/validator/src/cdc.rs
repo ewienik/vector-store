@@ -6,9 +6,9 @@
 use crate::TestActors;
 use crate::common::*;
 use async_backtrace::framed;
+use e2etest::TestCase;
 use std::time::Duration;
 use tracing::info;
-use vector_search_validator_tests::TestCase;
 
 const FINE_GRAINED_CDC_MAX_LATENCY: Duration = Duration::from_secs(2);
 const CDC_MAX_LATENCY: Duration = Duration::from_secs(60);

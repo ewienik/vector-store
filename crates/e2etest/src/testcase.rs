@@ -28,20 +28,16 @@ type TestFuture = BoxFuture<'static, ()>;
 type TestFn<F> = Box<dyn Fn(F) -> TestFuture>;
 
 #[derive(Debug, Default)]
-pub struct RunReport {
+pub(crate) struct RunReport {
     failed_tests: Vec<String>,
 }
 
 impl RunReport {
-    pub fn failed_tests(&self) -> &[String] {
-        &self.failed_tests
-    }
-
-    pub fn failed_tests_summary(&self) -> Option<String> {
+    pub(crate) fn failed_tests_summary(&self) -> Option<String> {
         format_failed_tests(&self.failed_tests)
     }
 
-    pub fn is_success(&self) -> bool {
+    pub(crate) fn is_success(&self) -> bool {
         self.failed_tests.is_empty()
     }
 }
@@ -54,7 +50,7 @@ impl From<Statistics> for RunReport {
     }
 }
 
-pub fn format_failed_tests(failed_tests: &[String]) -> Option<String> {
+pub(crate) fn format_failed_tests(failed_tests: &[String]) -> Option<String> {
     if failed_tests.is_empty() {
         return None;
     }
@@ -281,7 +277,7 @@ async fn run_single(
 
 #[framed]
 /// Runs all test cases, filtering them based on the provided filter map.
-pub async fn run<F>(
+pub(crate) async fn run<F>(
     fixture: F,
     test_cases: Vec<(String, TestCase<F>)>,
     filter_map: Arc<HashMap<String, HashSet<String>>>,

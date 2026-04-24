@@ -6,6 +6,7 @@
 use crate::TestActors;
 use crate::common::*;
 use async_backtrace::framed;
+use e2etest::TestCase;
 use e2etest_firewall::FirewallExt;
 use e2etest_scylla_cluster::ScyllaClusterExt;
 use e2etest_scylla_proxy_cluster::ScyllaProxyClusterExt;
@@ -17,7 +18,6 @@ use scylla_proxy::RequestRule;
 use std::time::Duration;
 use tap::Pipe;
 use tracing::info;
-use vector_search_validator_tests::TestCase;
 use vector_store::httproutes::IndexStatus;
 
 const FRAME_DELAY: Duration = Duration::from_millis(100);

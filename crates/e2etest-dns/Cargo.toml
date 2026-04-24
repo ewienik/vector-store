@@ -12,4 +12,3 @@ async-backtrace.workspace = true
 hickory-server.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-vector-search-validator-tests.workspace = true

@@ -7,11 +7,11 @@ use crate::TestActors;
 use crate::common;
 use crate::common::*;
 use async_backtrace::framed;
+use e2etest::TestCase;
 use httpclient::HttpClient;
 use scylla::client::session::Session;
 use std::collections::HashMap;
 use tracing::info;
-use vector_search_validator_tests::TestCase;
 use vector_store::IndexInfo;
 use vector_store::TableName;
 

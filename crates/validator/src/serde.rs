@@ -7,8 +7,8 @@ use crate::TestActors;
 use crate::common;
 use crate::common::*;
 use async_backtrace::framed;
+use e2etest::TestCase;
 use scylla::value::CqlValue;
-use vector_search_validator_tests::TestCase;
 
 #[framed]
 pub(crate) async fn new() -> TestCase<TestActors> {

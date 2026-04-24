@@ -21,6 +21,7 @@ mod serde;
 mod similarity_functions;
 
 use async_backtrace::framed;
+use e2etest::TestCase;
 use e2etest_dns::Dns;
 use e2etest_dns::DnsExt;
 use e2etest_firewall::Firewall;
@@ -40,7 +41,6 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
-use vector_search_validator_tests::TestCase;
 
 #[derive(clap::Args)]
 struct Args {

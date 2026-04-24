@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
+mod testcase;
+
 use async_backtrace::frame;
 use async_backtrace::framed;
 use clap::Parser;
@@ -14,6 +16,7 @@ use std::panic;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+pub use testcase::TestCase;
 use tokio::fs;
 use tokio::runtime::Builder;
 use tokio::runtime::Handle;
@@ -21,7 +24,6 @@ use tokio::task;
 use tokio::time;
 use tracing::error;
 use tracing::info;
-use vector_search_validator_tests::TestCase;
 
 #[derive(Parser)]
 #[clap(version)]
@@ -237,12 +239,8 @@ where
 
             let filter_map = parse_test_filters(filters, &test_cases);
 
-            let report = vector_search_validator_tests::run(
-                fixture(inner).await,
-                test_cases,
-                Arc::new(filter_map),
-            )
-            .await;
+            let report =
+                testcase::run(fixture(inner).await, test_cases, Arc::new(filter_map)).await;
 
             info!("Waiting for all tasks to finish...");
             const FINISH_TASKS_TIMEOUT: Duration = Duration::from_secs(10);

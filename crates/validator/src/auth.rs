@@ -7,6 +7,7 @@ use crate::TestActors;
 use crate::common;
 use crate::common::*;
 use async_backtrace::framed;
+use e2etest::TestCase;
 use e2etest_scylla_cluster::ScyllaClusterExt;
 use e2etest_vector_store_cluster::VectorStoreClusterExt;
 use std::sync::LazyLock;
@@ -14,7 +15,6 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
 use uuid::Uuid;
-use vector_search_validator_tests::TestCase;
 use vector_store::httproutes::IndexStatus;
 use vector_store::httproutes::NodeStatus;
 
