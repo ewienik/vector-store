@@ -6,6 +6,8 @@
 use crate::TestActors;
 use async_backtrace::framed;
 use e2etest_dns::DnsExt;
+use e2etest_scylla_cluster::ScyllaClusterExt;
+use e2etest_scylla_cluster::ScyllaNodeConfig;
 use httpclient::HttpClient;
 use itertools::Itertools;
 use scylla::client::session::Session;
@@ -23,8 +25,6 @@ use std::time::Duration;
 use tap::Pipe;
 use tokio::time;
 use tracing::info;
-use vector_search_validator_tests::ScyllaClusterExt;
-use vector_search_validator_tests::ScyllaNodeConfig;
 use vector_search_validator_tests::ScyllaProxyClusterExt;
 use vector_search_validator_tests::ScyllaProxyNodeConfig;
 use vector_search_validator_tests::TlsExt;
@@ -109,7 +109,7 @@ pub async fn get_default_scylla_node_configs(actors: &TestActors) -> Vec<ScyllaN
                 db_ip: ip,
                 primary_vs_uris: vec![vs_urls.remove(i)],
                 secondary_vs_uris: vs_urls,
-                args: vector_search_validator_tests::default_scylla_args(),
+                args: e2etest_scylla_cluster::default_scylla_args(),
                 cert_path: Some(cert_path.clone()),
                 key_path: Some(key_path.clone()),
                 extra_config: None,
