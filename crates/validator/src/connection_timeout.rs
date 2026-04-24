@@ -7,11 +7,11 @@ use crate::TestActors;
 use crate::common::*;
 use async_backtrace::framed;
 use e2etest_firewall::FirewallExt;
+use e2etest_vector_store_cluster::VectorStoreClusterExt;
 use std::time::Duration;
 use tap::Pipe;
 use tracing::info;
 use vector_search_validator_tests::TestCase;
-use vector_search_validator_tests::VectorStoreClusterExt;
 
 const CONNECTION_TIMEOUT: &str = "5s";
 

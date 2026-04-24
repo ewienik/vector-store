@@ -28,6 +28,8 @@ use e2etest_scylla_cluster::ScyllaCluster;
 use e2etest_scylla_cluster::ScyllaClusterExt;
 use e2etest_scylla_proxy_cluster::ScyllaProxyCluster;
 use e2etest_tls::Tls;
+use e2etest_vector_store_cluster::VectorStoreCluster;
+use e2etest_vector_store_cluster::VectorStoreClusterExt;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -39,8 +41,6 @@ use tracing_subscriber::filter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
 use vector_search_validator_tests::TestCase;
-use vector_search_validator_tests::VectorStoreCluster;
-use vector_search_validator_tests::VectorStoreClusterExt;
 
 #[derive(clap::Args)]
 struct Args {

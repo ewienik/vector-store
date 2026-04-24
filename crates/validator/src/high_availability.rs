@@ -11,10 +11,10 @@ use async_backtrace::framed;
 use e2etest_scylla_cluster::ScyllaClusterExt;
 use e2etest_scylla_cluster::ScyllaNodeConfig;
 use e2etest_tls::TlsExt;
+use e2etest_vector_store_cluster::VectorStoreNodeConfig;
 use scylla::statement::Statement;
 use tracing::info;
 use vector_search_validator_tests::TestCase;
-use vector_search_validator_tests::VectorStoreNodeConfig;
 
 #[framed]
 pub(crate) async fn new() -> TestCase<TestActors> {

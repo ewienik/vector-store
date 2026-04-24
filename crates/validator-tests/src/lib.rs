@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-mod vector_store_cluster;
-
 use async_backtrace::frame;
 use async_backtrace::framed;
 use futures::FutureExt;
@@ -24,9 +22,6 @@ use tracing::Span;
 use tracing::error;
 use tracing::error_span;
 use tracing::info;
-pub use vector_store_cluster::VectorStoreCluster;
-pub use vector_store_cluster::VectorStoreClusterExt;
-pub use vector_store_cluster::VectorStoreNodeConfig;
 
 type TestFuture = BoxFuture<'static, ()>;
 

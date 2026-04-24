@@ -6,7 +6,9 @@
 use async_backtrace::frame;
 use async_backtrace::framed;
 use httpclient::HttpClient;
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -18,14 +20,151 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Child;
 use tokio::process::Command;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::time;
 use tracing::Instrument;
 use tracing::debug;
 use tracing::debug_span;
 use tracing::info;
-use vector_search_validator_tests::VectorStoreCluster;
-use vector_search_validator_tests::VectorStoreNodeConfig;
 use vector_store::httproutes::NodeStatus;
+
+pub const VS_PORT: u16 = 6080;
+pub const DB_PORT: u16 = 9042;
+
+/// Configuration for a single Vector Store node in the test cluster.
+#[derive(Clone)]
+pub struct VectorStoreNodeConfig {
+    /// The IP address of this Vector Store node.
+    pub vs_ip: Ipv4Addr,
+    /// The IP address of the ScyllaDB node to connect to.
+    pub db_ip: Ipv4Addr,
+    /// Optional authentication username for the Vector Store node.
+    /// If `None`, authentication is disabled.
+    pub user: Option<String>,
+    /// Optional authentication password for the Vector Store node.
+    /// If `None`, authentication is disabled.
+    pub password: Option<String>,
+    /// Additional environment variables to pass to the Vector Store process.
+    pub envs: HashMap<String, String>,
+}
+
+impl VectorStoreNodeConfig {
+    pub fn vs_addr(&self) -> SocketAddr {
+        (self.vs_ip, VS_PORT).into()
+    }
+
+    pub fn db_addr(&self) -> SocketAddr {
+        (self.db_ip, DB_PORT).into()
+    }
+}
+
+pub enum VectorStoreCluster {
+    Version {
+        tx: oneshot::Sender<String>,
+    },
+    Start {
+        node_configs: Vec<VectorStoreNodeConfig>,
+    },
+    StartNode {
+        node_config: VectorStoreNodeConfig,
+    },
+    Stop {
+        tx: oneshot::Sender<()>,
+    },
+    StopNode {
+        vs_ip: Ipv4Addr,
+        tx: oneshot::Sender<()>,
+    },
+    WaitForReady {
+        tx: oneshot::Sender<bool>,
+    },
+}
+
+pub trait VectorStoreClusterExt {
+    /// Returns the version of the vector-store binary.
+    fn version(&self) -> impl Future<Output = String>;
+
+    /// Starts the vector-store cluster with the given node configurations.
+    fn start(&self, node_configs: Vec<VectorStoreNodeConfig>) -> impl Future<Output = ()>;
+
+    /// Starts a single vector-store instance.
+    fn start_node(&self, node_config: VectorStoreNodeConfig) -> impl Future<Output = ()>;
+
+    /// Stops the vector-store cluster.
+    fn stop(&self) -> impl Future<Output = ()>;
+
+    /// Stops a single vector-store instance.
+    fn stop_node(&self, vs_ip: Ipv4Addr) -> impl Future<Output = ()>;
+
+    /// Waits for the vector-store cluster to be ready.
+    fn wait_for_ready(&self) -> impl Future<Output = bool>;
+
+    /// Restarts a single vector-store instance.
+    fn restart(&self, node_config: &VectorStoreNodeConfig) -> impl Future<Output = ()>;
+}
+
+impl VectorStoreClusterExt for mpsc::Sender<VectorStoreCluster> {
+    #[framed]
+    async fn version(&self) -> String {
+        let (tx, rx) = oneshot::channel();
+        self.send(VectorStoreCluster::Version { tx })
+            .await
+            .expect("VectorStoreClusterExt::version: internal actor should receive request");
+        rx.await
+            .expect("VectorStoreClusterExt::version: internal actor should send response")
+    }
+
+    #[framed]
+    async fn start(&self, node_configs: Vec<VectorStoreNodeConfig>) {
+        self.send(VectorStoreCluster::Start { node_configs })
+            .await
+            .expect("VectorStoreClusterExt::start: internal actor should receive request");
+    }
+
+    #[framed]
+    async fn start_node(&self, node_config: VectorStoreNodeConfig) {
+        self.send(VectorStoreCluster::StartNode { node_config })
+            .await
+            .expect("VectorStoreClusterExt::start_node: internal actor should receive request");
+    }
+
+    #[framed]
+    async fn stop(&self) {
+        let (tx, rx) = oneshot::channel();
+        self.send(VectorStoreCluster::Stop { tx })
+            .await
+            .expect("VectorStoreClusterExt::stop: internal actor should receive request");
+        rx.await
+            .expect("VectorStoreClusterExt::stop: internal actor should send response");
+    }
+
+    #[framed]
+    async fn stop_node(&self, vs_ip: Ipv4Addr) {
+        let (tx, rx) = oneshot::channel();
+        self.send(VectorStoreCluster::StopNode { vs_ip, tx })
+            .await
+            .expect("VectorStoreClusterExt::stop_node: internal actor should receive request");
+        rx.await
+            .expect("VectorStoreClusterExt::stop_node: internal actor should send response");
+    }
+
+    #[framed]
+    async fn wait_for_ready(&self) -> bool {
+        let (tx, rx) = oneshot::channel();
+        self.send(VectorStoreCluster::WaitForReady { tx })
+            .await
+            .expect("VectorStoreClusterExt::wait_for_ready: internal actor should receive request");
+        rx.await
+            .expect("VectorStoreClusterExt::wait_for_ready: internal actor should send response")
+    }
+
+    #[framed]
+    async fn restart(&self, node_config: &VectorStoreNodeConfig) {
+        self.stop_node(node_config.vs_ip).await;
+        self.start_node(node_config.clone()).await;
+        assert!(self.wait_for_ready().await);
+    }
+}
 
 #[framed]
 pub async fn new(
