@@ -24,7 +24,7 @@ use vector_search_validator_tests::ScyllaProxyNodeConfig;
 const DEFAULT_SCYLLA_CQL_PORT: u16 = 9042;
 
 #[framed]
-pub(crate) async fn new() -> mpsc::Sender<ScyllaProxyCluster> {
+pub async fn new() -> mpsc::Sender<ScyllaProxyCluster> {
     let (tx, mut rx) = mpsc::channel(10);
 
     tokio::spawn(

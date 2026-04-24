@@ -30,7 +30,7 @@ use vector_search_validator_tests::Dns;
 
 #[framed]
 /// Starts the DNS server on the given IP address.
-pub(crate) async fn new(ip: Ipv4Addr) -> mpsc::Sender<Dns> {
+pub async fn new(ip: Ipv4Addr) -> mpsc::Sender<Dns> {
     assert!(ip.is_loopback(), "DNS server should listen on a localhost");
 
     let (tx, mut rx) = mpsc::channel(10);

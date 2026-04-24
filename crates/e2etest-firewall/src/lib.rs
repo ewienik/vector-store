@@ -26,7 +26,7 @@ use tracing::info;
 use vector_search_validator_tests::Firewall;
 
 #[framed]
-pub(crate) async fn new() -> mpsc::Sender<Firewall> {
+pub async fn new() -> mpsc::Sender<Firewall> {
     let (tx, mut rx) = mpsc::channel(10);
 
     tokio::spawn(

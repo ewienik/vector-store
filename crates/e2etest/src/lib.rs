@@ -3,41 +3,25 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-mod dns;
-mod firewall;
-mod scylla_cluster;
-mod scylla_proxy_cluster;
-mod tls;
-mod vector_store_cluster;
-
 use async_backtrace::frame;
 use async_backtrace::framed;
 use clap::Parser;
 use clap::Subcommand;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::net::Ipv4Addr;
 use std::os::unix::fs::PermissionsExt;
 use std::panic;
 use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs;
 use tokio::runtime::Builder;
 use tokio::runtime::Handle;
-use tokio::sync::mpsc;
 use tokio::task;
 use tokio::time;
 use tracing::error;
 use tracing::info;
-use vector_search_validator_tests::Dns;
-use vector_search_validator_tests::Firewall;
-use vector_search_validator_tests::ScyllaCluster;
-use vector_search_validator_tests::ScyllaProxyCluster;
 use vector_search_validator_tests::TestCase;
-use vector_search_validator_tests::Tls;
-use vector_search_validator_tests::VectorStoreCluster;
 
 #[derive(Parser)]
 #[clap(version)]
@@ -69,7 +53,7 @@ enum Command<T: clap::Args> {
 }
 
 #[framed]
-async fn file_exists(path: &Path) -> bool {
+pub async fn file_exists(path: &Path) -> bool {
     let Ok(metadata) = fs::metadata(path).await else {
         return false;
     };
@@ -77,7 +61,7 @@ async fn file_exists(path: &Path) -> bool {
 }
 
 #[framed]
-async fn executable_exists(path: &Path) -> bool {
+pub async fn executable_exists(path: &Path) -> bool {
     let Ok(metadata) = fs::metadata(path).await else {
         return false;
     };
@@ -284,40 +268,6 @@ where
                 .then_some(())
                 .ok_or("Some vector-search-validator tests failed")
         }))
-}
-
-pub async fn new_dns(ip: Ipv4Addr) -> mpsc::Sender<Dns> {
-    dns::new(ip).await
-}
-
-pub async fn new_firewall() -> mpsc::Sender<Firewall> {
-    firewall::new().await
-}
-
-pub async fn new_scylla_cluster(
-    path: PathBuf,
-    default_conf: PathBuf,
-    tempdir: PathBuf,
-    verbose: bool,
-) -> mpsc::Sender<ScyllaCluster> {
-    scylla_cluster::new(path, default_conf, tempdir, verbose).await
-}
-
-pub async fn new_scylla_proxy_cluster() -> mpsc::Sender<ScyllaProxyCluster> {
-    scylla_proxy_cluster::new().await
-}
-
-pub async fn new_tls(ips: &[Ipv4Addr]) -> mpsc::Sender<Tls> {
-    tls::new(ips).await
-}
-
-pub async fn new_vector_store_cluster(
-    path: PathBuf,
-    verbose: bool,
-    disable_colors: bool,
-    tmpdir: PathBuf,
-) -> mpsc::Sender<VectorStoreCluster> {
-    vector_store_cluster::new(path, verbose, disable_colors, tmpdir).await
 }
 
 #[cfg(test)]

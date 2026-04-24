@@ -28,7 +28,7 @@ use vector_search_validator_tests::VectorStoreNodeConfig;
 use vector_store::httproutes::NodeStatus;
 
 #[framed]
-pub(crate) async fn new(
+pub async fn new(
     path: PathBuf,
     verbose: bool,
     disable_colors: bool,
@@ -37,7 +37,7 @@ pub(crate) async fn new(
     let (tx, mut rx) = mpsc::channel(10);
 
     assert!(
-        crate::executable_exists(&path).await,
+        e2etest::executable_exists(&path).await,
         "vector-store executable '{path:?}' does not exist"
     );
 

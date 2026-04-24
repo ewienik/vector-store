@@ -1152,30 +1152,89 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 [[package]]
 name = "e2etest"
 version = "0.0.0-dev"
+dependencies = [
+ "async-backtrace",
+ "clap",
+ "tokio",
+ "tracing",
+ "vector-search-validator-tests",
+]
 
 [[package]]
 name = "e2etest-dns"
 version = "0.0.0-dev"
+dependencies = [
+ "async-backtrace",
+ "hickory-server",
+ "tokio",
+ "tracing",
+ "vector-search-validator-tests",
+]
 
 [[package]]
 name = "e2etest-firewall"
 version = "0.0.0-dev"
+dependencies = [
+ "anyhow",
+ "async-backtrace",
+ "neli",
+ "tokio",
+ "tracing",
+ "vector-search-validator-tests",
+]
 
 [[package]]
 name = "e2etest-scylla-cluster"
 version = "0.0.0-dev"
+dependencies = [
+ "async-backtrace",
+ "e2etest",
+ "sysinfo",
+ "tap",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "vector-search-validator-tests",
+]
 
 [[package]]
 name = "e2etest-scylla-proxy-cluster"
 version = "0.0.0-dev"
+dependencies = [
+ "async-backtrace",
+ "scylla-proxy",
+ "tokio",
+ "tracing",
+ "vector-search-validator-tests",
+]
 
 [[package]]
 name = "e2etest-tls"
 version = "0.0.0-dev"
+dependencies = [
+ "async-backtrace",
+ "rcgen",
+ "rustls",
+ "rustls-pki-types",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "vector-search-validator-tests",
+]
 
 [[package]]
 name = "e2etest-vector-store-cluster"
 version = "0.0.0-dev"
+dependencies = [
+ "async-backtrace",
+ "e2etest",
+ "httpclient",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "vector-search-validator-tests",
+ "vector-store",
+]
 
 [[package]]
 name = "either"
@@ -4251,6 +4310,13 @@ dependencies = [
  "async-backtrace",
  "bcrypt",
  "clap",
+ "e2etest",
+ "e2etest-dns",
+ "e2etest-firewall",
+ "e2etest-scylla-cluster",
+ "e2etest-scylla-proxy-cluster",
+ "e2etest-tls",
+ "e2etest-vector-store-cluster",
  "httpclient",
  "itertools 0.14.0",
  "rustls",
@@ -4262,30 +4328,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "vector-search-validator-engine",
- "vector-search-validator-tests",
- "vector-store",
-]
-
-[[package]]
-name = "vector-search-validator-engine"
-version = "0.0.0-dev"
-dependencies = [
- "anyhow",
- "async-backtrace",
- "clap",
- "hickory-server",
- "httpclient",
- "neli",
- "rcgen",
- "rustls",
- "rustls-pki-types",
- "scylla-proxy",
- "sysinfo",
- "tap",
- "tempfile",
- "tokio",
- "tracing",
  "vector-search-validator-tests",
  "vector-store",
 ]

@@ -22,7 +22,7 @@ use vector_search_validator_tests::Tls;
 
 /// Generates self-signed TLS certificates for the given IPs and starts
 /// the TLS actor that serves certificate paths and TLS contexts.
-pub(crate) async fn new(ips: &[Ipv4Addr]) -> mpsc::Sender<Tls> {
+pub async fn new(ips: &[Ipv4Addr]) -> mpsc::Sender<Tls> {
     let (tx, mut rx) = mpsc::channel(10);
 
     let subject_alt_names: Vec<String> = ips.iter().map(|ip| ip.to_string()).collect();

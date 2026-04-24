@@ -31,7 +31,7 @@ use vector_search_validator_tests::ScyllaNodeConfig;
 const DEFAULT_SCYLLA_CQL_PORT: u16 = 9042;
 
 #[framed]
-pub(crate) async fn new(
+pub async fn new(
     path: PathBuf,
     default_conf: PathBuf,
     tempdir: PathBuf,
@@ -40,11 +40,11 @@ pub(crate) async fn new(
     let (tx, mut rx) = mpsc::channel(10);
 
     assert!(
-        crate::executable_exists(&path).await,
+        e2etest::executable_exists(&path).await,
         "scylla executable '{path:?}' does not exist"
     );
     assert!(
-        crate::file_exists(&default_conf).await,
+        e2etest::file_exists(&default_conf).await,
         "scylla config '{default_conf:?}' does not exist"
     );
 

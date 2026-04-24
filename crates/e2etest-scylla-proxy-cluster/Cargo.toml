@@ -8,3 +8,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+async-backtrace.workspace = true
+scylla-proxy.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+vector-search-validator-tests.workspace = true
