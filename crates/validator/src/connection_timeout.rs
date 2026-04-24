@@ -6,10 +6,10 @@
 use crate::TestActors;
 use crate::common::*;
 use async_backtrace::framed;
+use e2etest_firewall::FirewallExt;
 use std::time::Duration;
 use tap::Pipe;
 use tracing::info;
-use vector_search_validator_tests::FirewallExt;
 use vector_search_validator_tests::TestCase;
 use vector_search_validator_tests::VectorStoreClusterExt;
 
