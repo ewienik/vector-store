@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-mod dns;
 mod firewall;
 mod scylla_cluster;
 mod scylla_proxy_cluster;
@@ -12,8 +11,6 @@ mod vector_store_cluster;
 
 use async_backtrace::frame;
 use async_backtrace::framed;
-pub use dns::Dns;
-pub use dns::DnsExt;
 pub use firewall::Firewall;
 pub use firewall::FirewallExt;
 use futures::FutureExt;

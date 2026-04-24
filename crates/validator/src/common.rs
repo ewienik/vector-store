@@ -5,6 +5,7 @@
 
 use crate::TestActors;
 use async_backtrace::framed;
+use e2etest_dns::DnsExt;
 use httpclient::HttpClient;
 use itertools::Itertools;
 use scylla::client::session::Session;
@@ -22,7 +23,6 @@ use std::time::Duration;
 use tap::Pipe;
 use tokio::time;
 use tracing::info;
-use vector_search_validator_tests::DnsExt;
 use vector_search_validator_tests::ScyllaClusterExt;
 use vector_search_validator_tests::ScyllaNodeConfig;
 use vector_search_validator_tests::ScyllaProxyClusterExt;

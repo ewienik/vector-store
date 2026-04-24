@@ -21,6 +21,8 @@ mod serde;
 mod similarity_functions;
 
 use async_backtrace::framed;
+use e2etest_dns::Dns;
+use e2etest_dns::DnsExt;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,8 +33,6 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
-use vector_search_validator_tests::Dns;
-use vector_search_validator_tests::DnsExt;
 use vector_search_validator_tests::Firewall;
 use vector_search_validator_tests::ScyllaCluster;
 use vector_search_validator_tests::ScyllaClusterExt;
