@@ -6,13 +6,13 @@
 use crate::TestActors;
 use crate::common::*;
 use async_backtrace::framed;
+use e2etest_scylla_proxy_cluster::ScyllaProxyClusterExt;
 use scylla_proxy::Condition;
 use scylla_proxy::Reaction;
 use scylla_proxy::RequestReaction;
 use scylla_proxy::RequestRule;
 use std::time::Duration;
 use tracing::info;
-use vector_search_validator_tests::ScyllaProxyClusterExt;
 use vector_search_validator_tests::TestCase;
 
 #[framed]

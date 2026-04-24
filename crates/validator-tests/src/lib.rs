@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-mod scylla_proxy_cluster;
 mod tls;
 mod vector_store_cluster;
 
@@ -13,9 +12,6 @@ use futures::FutureExt;
 use futures::future::BoxFuture;
 use futures::stream;
 use futures::stream::StreamExt;
-pub use scylla_proxy_cluster::ScyllaProxyCluster;
-pub use scylla_proxy_cluster::ScyllaProxyClusterExt;
-pub use scylla_proxy_cluster::ScyllaProxyNodeConfig;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::future;
