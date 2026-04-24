@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-mod tls;
 mod vector_store_cluster;
 
 use async_backtrace::frame;
@@ -19,8 +18,6 @@ use std::panic;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
-pub use tls::Tls;
-pub use tls::TlsExt;
 use tokio::time;
 use tracing::Instrument;
 use tracing::Span;

@@ -4,6 +4,7 @@
  */
 
 use async_backtrace::frame;
+use async_backtrace::framed;
 use rcgen::CertifiedKey;
 use rustls::ClientConfig;
 use rustls::RootCertStore;
@@ -12,14 +13,68 @@ use rustls_pki_types::pem::PemObject;
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tracing::Instrument;
 use tracing::debug;
 use tracing::debug_span;
-use vector_search_validator_tests::Tls;
 
+pub enum Tls {
+    /// Returns the filesystem path to the certificate file.
+    CertPath { tx: oneshot::Sender<PathBuf> },
+    /// Returns the filesystem path to the key file.
+    KeyPath { tx: oneshot::Sender<PathBuf> },
+    /// Returns the pre-built TLS client configuration.
+    ClientTlsConfig {
+        tx: oneshot::Sender<Arc<ClientConfig>>,
+    },
+}
+
+pub trait TlsExt {
+    /// Returns the filesystem path to the certificate file.
+    fn cert_path(&self) -> impl Future<Output = PathBuf>;
+
+    /// Returns the filesystem path to the key file.
+    fn key_path(&self) -> impl Future<Output = PathBuf>;
+
+    /// Returns the pre-built TLS client configuration.
+    fn client_tls_config(&self) -> impl Future<Output = Arc<ClientConfig>>;
+}
+
+impl TlsExt for mpsc::Sender<Tls> {
+    #[framed]
+    async fn cert_path(&self) -> PathBuf {
+        let (tx, rx) = oneshot::channel();
+        self.send(Tls::CertPath { tx })
+            .await
+            .expect("TlsExt::cert_path: internal actor should receive request");
+        rx.await
+            .expect("TlsExt::cert_path: internal actor should send response")
+    }
+
+    #[framed]
+    async fn key_path(&self) -> PathBuf {
+        let (tx, rx) = oneshot::channel();
+        self.send(Tls::KeyPath { tx })
+            .await
+            .expect("TlsExt::key_path: internal actor should receive request");
+        rx.await
+            .expect("TlsExt::key_path: internal actor should send response")
+    }
+
+    #[framed]
+    async fn client_tls_config(&self) -> Arc<ClientConfig> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Tls::ClientTlsConfig { tx })
+            .await
+            .expect("TlsExt::client_tls_config: internal actor should receive request");
+        rx.await
+            .expect("TlsExt::client_tls_config: internal actor should send response")
+    }
+}
 /// Generates self-signed TLS certificates for the given IPs and starts
 /// the TLS actor that serves certificate paths and TLS contexts.
 pub async fn new(ips: &[Ipv4Addr]) -> mpsc::Sender<Tls> {

@@ -10,10 +10,10 @@ use crate::common::*;
 use async_backtrace::framed;
 use e2etest_scylla_cluster::ScyllaClusterExt;
 use e2etest_scylla_cluster::ScyllaNodeConfig;
+use e2etest_tls::TlsExt;
 use scylla::statement::Statement;
 use tracing::info;
 use vector_search_validator_tests::TestCase;
-use vector_search_validator_tests::TlsExt;
 use vector_search_validator_tests::VectorStoreNodeConfig;
 
 #[framed]
