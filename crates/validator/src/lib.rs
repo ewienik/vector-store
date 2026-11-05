@@ -212,6 +212,7 @@ pub fn run() -> ExitCode {
     init(&args);
 
     if let Some(unshare_info) = e2etest::unshare_info() {
+        info!("unshare info: {unshare_info:?}");
         e2etest::run_in_unshare(config_in_unshare(args, unshare_info));
         return ExitCode::SUCCESS;
     };

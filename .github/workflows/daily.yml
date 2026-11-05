@@ -65,7 +65,6 @@ jobs:
       os: ${{ matrix.os }}
       arch: ${{ matrix.arch }}
       testcase: ${{ matrix.testcase }}
-      ref: ${{ github.sha }}
     strategy:
       fail-fast: false
       matrix:
